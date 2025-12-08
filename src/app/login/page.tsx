@@ -7,6 +7,7 @@ import { signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import { Mail, Lock, Eye, EyeOff, AlertCircle, Loader2, ArrowRight } from "lucide-react";
 import { motion } from "framer-motion";
+import MagneticButton from "@/components/ui/MagneticButton";
 
 export default function LoginPage() {
   const router = useRouter();
