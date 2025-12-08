@@ -6,7 +6,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
 import { auth, db } from "../lib/firebase";
 import { User, GraduationCap, Building2, AlertCircle } from "lucide-react";
-
+import { useAuthProtection } from "@/hooks/useAuthProtection";
 const BATCH_OPTIONS = ["Batch 32", "Batch 33", "Batch 34", "Batch 35"];
 
 const FACULTY_OPTIONS = [
@@ -60,20 +60,23 @@ export default function OnboardingPage() {
         return;
       }
 
-      // Write to Firestore
-      await setDoc(doc(db, "users", user.uid), {
+      // Prepare user data
+      const userData = {
         fullName,
         batch,
         faculty,
         role: "student",
-      });
+      };
 
-      // Redirect to profile
-      router.push("/profile");
+      // Write to Firestore - force document ID to match Authentication UID
+      await setDoc(doc(db, "users", user.uid), userData);
+
+      // Force browser reload to wake up AuthContext and fetch new profile
+      window.location.href = '/profile';
     } catch (error: any) {
-      console.error("Onboarding error:", error);
+      console.error("SAVE ERROR:", error);
+      alert(error.message);
       setError("An error occurred while saving your information. Please try again.");
-    } finally {
       setLoading(false);
     }
   };
