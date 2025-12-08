@@ -48,10 +48,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
           if (userDocSnap.exists()) {
             const data = userDocSnap.data();
             // Ensure email is included (merge from User if not in Firestore)
+            // Type-safe mapping with defaults
             const userProfile: UserProfile = {
-              ...data,
+              fullName: data.fullName || "",
               email: data.email || firebaseUser.email || "",
-            } as UserProfile;
+              role: (data.role === "admin" || data.role === "cr" || data.role === "student") 
+                ? data.role 
+                : "student",
+              faculty: data.faculty || "",
+              batch: data.batch || null,
+              designation: data.designation || "",
+            };
             setUserProfile(userProfile);
           } else {
             setUserProfile(null);
