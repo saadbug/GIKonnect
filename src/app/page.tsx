@@ -85,8 +85,8 @@ export default function Home() {
         
         if (
           event.scope === "faculty" &&
-          event.targetFaculty === (userProfile as any).faculty &&
-          event.targetBatch === (userProfile as any).batch
+          event.targetFaculty === userProfile.faculty &&
+          event.targetBatch === userProfile.batch
         ) {
           return true;
         }

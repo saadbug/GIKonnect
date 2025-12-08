@@ -130,7 +130,7 @@ export default function ProfilePage() {
                 <div className="inline-flex items-center gap-1.5 mt-2 px-4 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-full backdrop-blur-md">
                   <GraduationCap size={14} className="text-blue-400" />
                   <span className="text-xs font-bold text-blue-300 uppercase tracking-wider">
-                    {formatBatch(userProfile.batch)}
+                    {formatBatch(userProfile.batch || "")}
                   </span>
                 </div>
               </div>
@@ -145,7 +145,7 @@ export default function ProfilePage() {
                  <DetailRow 
                    icon={<Mail className="h-4 w-4 text-cyan-400" />} 
                    label="Email" 
-                   value={user.email} 
+                   value={user?.email || ""} 
                  />
               </div>
 
