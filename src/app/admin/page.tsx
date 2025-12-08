@@ -42,7 +42,7 @@ const EVENT_TYPES = ["Quiz", "Assignment", "Project", "Notice", "Session", "Holi
 const BATCH_OPTIONS = Array.from({ length: 50 }, (_, i) => `Batch ${i + 1}`);
 
 export default function AdminDashboard() {
-  const { user, userProfile, loading: authLoading } = useAuthProtection() as any;
+  const { user, userProfile, loading: authLoading } = useAuthProtection();
   const router = useRouter();
 
   const [title, setTitle] = useState("");
@@ -60,10 +60,10 @@ export default function AdminDashboard() {
 
   // Auto-set scope for CR users
   useEffect(() => {
-    if ((userProfile as any)?.role === "cr") {
+    if (userProfile?.role === "cr") {
       setScope("targeted");
-      setTargetFaculty((userProfile as any).faculty || "");
-      setTargetBatch((userProfile as any).batch || "");
+      setTargetFaculty(userProfile.faculty || "");
+      setTargetBatch(userProfile.batch || "");
     }
   }, [userProfile]);
 
