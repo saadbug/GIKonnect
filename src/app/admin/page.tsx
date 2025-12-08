@@ -42,7 +42,7 @@ const EVENT_TYPES = ["Quiz", "Assignment", "Project", "Notice", "Session", "Holi
 const BATCH_OPTIONS = Array.from({ length: 50 }, (_, i) => `Batch ${i + 1}`);
 
 export default function AdminDashboard() {
-  const { user, userProfile, loading: authLoading } = useAuthProtection();
+  const { user, userProfile, loading: authLoading } = useAuthProtection() as any;
   const router = useRouter();
 
   const [title, setTitle] = useState("");
@@ -60,16 +60,16 @@ export default function AdminDashboard() {
 
   // Auto-set scope for CR users
   useEffect(() => {
-    if (userProfile?.role === "cr") {
+    if ((userProfile as any)?.role === "cr") {
       setScope("targeted");
-      setTargetFaculty(userProfile.faculty || "");
-      setTargetBatch(userProfile.batch || "");
+      setTargetFaculty((userProfile as any).faculty || "");
+      setTargetBatch((userProfile as any).batch || "");
     }
   }, [userProfile]);
 
   // Check access control
   if (!authLoading && userProfile) {
-    const hasAccess = userProfile.role === "admin" || userProfile.role === "cr";
+    const hasAccess = (userProfile as any).role === "admin" || (userProfile as any).role === "cr";
     if (!hasAccess) {
       return (
         <div className="min-h-screen bg-slate-950 relative overflow-hidden font-sans text-white pb-24 flex items-center justify-center">
@@ -124,8 +124,8 @@ export default function AdminDashboard() {
     );
   }
 
-  const isAdmin = userProfile.role === "admin";
-  const isCR = userProfile.role === "cr";
+  const isAdmin = (userProfile as any).role === "admin";
+  const isCR = (userProfile as any).role === "cr";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -156,8 +156,8 @@ export default function AdminDashboard() {
 
       if (isCR) {
         finalScope = "targeted";
-        finalTargetFaculty = userProfile.faculty || "";
-        finalTargetBatch = userProfile.batch || "";
+        finalTargetFaculty = (userProfile as any).faculty || "";
+        finalTargetBatch = (userProfile as any).batch || "";
       } else if (isAdmin && scope === "targeted") {
         if (!targetFaculty || !targetBatch) {
           throw new Error("Please select both Faculty and Batch for targeted events");
@@ -182,10 +182,10 @@ export default function AdminDashboard() {
 
         // Audit trail fields
         authorUid: user.uid,
-        authorName: userProfile.fullName || "Unknown",
+        authorName: (userProfile as any).fullName || "Unknown",
         authorEmail: user.email || "",
-        authorRole: userProfile.role || "student",
-        authorDesignation: userProfile.designation || "Student",
+        authorRole: (userProfile as any).role || "student",
+        authorDesignation: (userProfile as any).designation || "Student",
         timestamp: serverTimestamp(),
       };
 
@@ -562,7 +562,7 @@ export default function AdminDashboard() {
                 <div className="flex items-center gap-2">
                   <ShieldCheck className="h-5 w-5 flex-shrink-0" />
                   <span>
-                    Posting to: <strong>{userProfile.faculty}</strong> - <strong>{userProfile.batch}</strong>
+                    Posting to: <strong>{(userProfile as any).faculty}</strong> - <strong>{(userProfile as any).batch}</strong>
                   </span>
                 </div>
               </div>
@@ -572,7 +572,7 @@ export default function AdminDashboard() {
             <div className="p-4 bg-slate-950/50 rounded-xl border border-slate-700/50 text-sm">
               <p className="text-slate-400 mb-1">Created by:</p>
               <p className="text-white font-semibold">
-                {userProfile.designation || "Student"} {userProfile.fullName}
+                {(userProfile as any).designation || "Student"} {(userProfile as any).fullName}
               </p>
             </div>
 
