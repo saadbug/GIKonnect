@@ -5,10 +5,18 @@ import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
 import { auth, db } from "../lib/firebase";
-import { User, GraduationCap, Building2, AlertCircle, ArrowRight, Loader2, Sparkles } from "lucide-react";
+import {
+  User,
+  GraduationCap,
+  Building2,
+  AlertCircle,
+  ArrowRight,
+  Loader2,
+  Sparkles,
+  ShieldCheck,
+  BadgeCheck,
+} from "lucide-react";
 import { motion } from "framer-motion";
-
-const BATCH_OPTIONS = ["Batch 32", "Batch 33", "Batch 34", "Batch 35"];
 
 const FACULTY_OPTIONS = [
   "Artificial Intelligence",
@@ -26,11 +34,33 @@ const FACULTY_OPTIONS = [
   "Software Engineering",
 ];
 
+const DESIGNATION_OPTIONS = ["Professor", "Lecturer", "Admin", "TA"];
+
+const STUDENT_EMAIL_REGEX = /^u(20\d{2})\d{3}@giki\.edu\.pk$/i;
+
+const detectRoleAndBatch = (email: string | null | undefined) => {
+  const match = email?.toLowerCase().match(STUDENT_EMAIL_REGEX);
+  if (match) {
+    const year = match[1];
+    const batchNumber = parseInt(year, 10) - 1990;
+    const batchLabel = `Batch ${batchNumber}`;
+    return {
+      role: "student" as const,
+      batch: batchLabel,
+      isStaff: false,
+    };
+  }
+  return { role: "admin" as const, batch: "", isStaff: true };
+};
+
 export default function OnboardingPage() {
   const router = useRouter();
   const [fullName, setFullName] = useState("");
   const [batch, setBatch] = useState("");
   const [faculty, setFaculty] = useState("");
+  const [designation, setDesignation] = useState("");
+  const [role, setRole] = useState<"student" | "admin">("student");
+  const [isStaffAccount, setIsStaffAccount] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
@@ -40,9 +70,18 @@ export default function OnboardingPage() {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (!user) {
         router.push("/login");
-      } else {
-        setIsCheckingAuth(false);
+        return;
       }
+
+      const email = user.email || "";
+      const detection = detectRoleAndBatch(email);
+      setRole(detection.role);
+      setBatch(detection.batch);
+      setIsStaffAccount(detection.isStaff);
+      if (detection.role === "student") {
+        setDesignation("");
+      }
+      setIsCheckingAuth(false);
     });
 
     return () => unsubscribe();
@@ -61,11 +100,22 @@ export default function OnboardingPage() {
         return;
       }
 
+      // Re-run detection at submit time to ignore any tampering
+      const detection = detectRoleAndBatch(user.email);
+      const isAdmin = detection.role === "admin";
+
+      if (isAdmin && !designation) {
+        setError("Please select your designation.");
+        setLoading(false);
+        return;
+      }
+
       const userData = {
         fullName,
-        batch,
+        batch: detection.role === "student" ? detection.batch : null,
         faculty,
-        role: "student",
+        designation: isAdmin ? designation : null,
+        role: detection.role,
       };
 
       // Write to Firestore - force document ID to match Authentication UID
@@ -129,7 +179,7 @@ export default function OnboardingPage() {
             Welcome Aboard
           </h1>
           <p className="text-slate-400">
-            Let's get your student profile set up.
+            Let's get your account set up.
           </p>
         </motion.div>
 
@@ -141,6 +191,21 @@ export default function OnboardingPage() {
           className="bg-slate-900/40 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/10 p-8"
         >
           <form onSubmit={handleSubmit} className="space-y-6">
+            {isStaffAccount && (
+              <div className="flex items-center gap-3 p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-300 text-sm">
+                <ShieldCheck className="h-5 w-5 flex-shrink-0" />
+                <span>Verified Staff/Faculty Account</span>
+              </div>
+            )}
+            {!isStaffAccount && (
+              <div className="flex items-center gap-3 p-3 bg-blue-500/10 border border-blue-500/30 rounded-xl text-blue-200 text-sm">
+                <GraduationCap className="h-5 w-5 flex-shrink-0" />
+                <span>Student email detected — role set to student automatically</span>
+              </div>
+            )}
+            <p className="text-xs text-slate-400 ml-1">
+              Detected role: {role === "student" ? "Student" : "Admin / Faculty"}
+            </p>
             
             {/* Full Name Field */}
             <div className="space-y-2">
@@ -158,36 +223,33 @@ export default function OnboardingPage() {
                   onChange={(e) => setFullName(e.target.value)}
                   placeholder="Enter your full name"
                   required
-                  className="block w-full pl-11 pr-4 py-3.5 bg-slate-950/50 border border-slate-700/50 rounded-xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all"
+                  disabled={loading}
+                  className="block w-full pl-11 pr-4 py-3.5 bg-slate-950/50 border border-slate-700/50 rounded-xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all disabled:opacity-60"
                 />
               </div>
             </div>
 
-            {/* Batch Field */}
-            <div className="space-y-2">
-              <label htmlFor="batch" className="block text-sm font-medium text-slate-300 ml-1">
-                Batch
-              </label>
-              <div className="relative group">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                  <GraduationCap className="h-5 w-5 text-slate-500 group-focus-within:text-blue-400 transition-colors" />
+            {/* Batch Field (auto-detected for students) */}
+            {!isStaffAccount && (
+              <div className="space-y-2">
+                <label htmlFor="batch" className="block text-sm font-medium text-slate-300 ml-1">
+                  Batch
+                </label>
+                <div className="relative group">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <GraduationCap className="h-5 w-5 text-slate-500 group-focus-within:text-blue-400 transition-colors" />
+                  </div>
+                  <input
+                    id="batch"
+                    type="text"
+                    value={batch ? `${batch} (Detected from Email)` : ""}
+                    readOnly
+                    disabled
+                    className="block w-full pl-11 pr-4 py-3.5 bg-slate-900/60 border border-blue-500/40 rounded-xl text-white placeholder-slate-600 cursor-not-allowed"
+                  />
                 </div>
-                <select
-                  id="batch"
-                  value={batch}
-                  onChange={(e) => setBatch(e.target.value)}
-                  required
-                  className="block w-full pl-11 pr-4 py-3.5 bg-slate-950/50 border border-slate-700/50 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all appearance-none cursor-pointer"
-                >
-                  <option value="" className="bg-slate-900">Select your batch</option>
-                  {BATCH_OPTIONS.map((option) => (
-                    <option key={option} value={option} className="bg-slate-900">
-                      {option}
-                    </option>
-                  ))}
-                </select>
               </div>
-            </div>
+            )}
 
             {/* Faculty Field */}
             <div className="space-y-2">
@@ -203,7 +265,8 @@ export default function OnboardingPage() {
                   value={faculty}
                   onChange={(e) => setFaculty(e.target.value)}
                   required
-                  className="block w-full pl-11 pr-4 py-3.5 bg-slate-950/50 border border-slate-700/50 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all appearance-none cursor-pointer"
+                  disabled={loading}
+                  className="block w-full pl-11 pr-4 py-3.5 bg-slate-950/50 border border-slate-700/50 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all appearance-none cursor-pointer disabled:opacity-60"
                 >
                   <option value="" className="bg-slate-900">Select your faculty</option>
                   {FACULTY_OPTIONS.map((option) => (
@@ -214,6 +277,35 @@ export default function OnboardingPage() {
                 </select>
               </div>
             </div>
+
+            {/* Designation Field (staff/faculty only) */}
+            {isStaffAccount && (
+              <div className="space-y-2">
+                <label htmlFor="designation" className="block text-sm font-medium text-slate-300 ml-1">
+                  Designation
+                </label>
+                <div className="relative group">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <BadgeCheck className="h-5 w-5 text-slate-500 group-focus-within:text-blue-400 transition-colors" />
+                  </div>
+                  <select
+                    id="designation"
+                    value={designation}
+                    onChange={(e) => setDesignation(e.target.value)}
+                    required={isStaffAccount}
+                    disabled={loading}
+                    className="block w-full pl-11 pr-4 py-3.5 bg-slate-950/50 border border-slate-700/50 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all appearance-none cursor-pointer disabled:opacity-60"
+                  >
+                    <option value="" className="bg-slate-900">Select your designation</option>
+                    {DESIGNATION_OPTIONS.map((option) => (
+                      <option key={option} value={option} className="bg-slate-900">
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
 
             {/* Error Message */}
             {error && (

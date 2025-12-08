@@ -1,56 +1,36 @@
 "use client";
 
-import { useState } from "react";
-import { ChevronLeft, ChevronRight, MapPin, Clock, Calendar as CalendarIcon, Sparkles } from "lucide-react";
+import { useState, useEffect } from "react";
+import { ChevronLeft, ChevronRight, MapPin, Clock, Calendar as CalendarIcon, Sparkles, Pin, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuthProtection } from "@/hooks/useAuthProtection";
+import { useAuth } from "@/context/AuthContext";
+import { collection, onSnapshot, Timestamp } from "firebase/firestore";
+import { db } from "@/app/lib/firebase";
 
-// --- Types & Dummy Data ---
+// --- Types ---
 type Event = {
-  id: number;
+  id: string;
   title: string;
-  date: Date; // Year, Month (0-11), Day
-  location: string;
-  type: "Academic" | "Social" | "Mess" | "Sport";
+  date: Timestamp | Date;
+  location?: string;
+  type: "Quiz" | "Holiday" | "Notice" | "Academic" | "Social" | "Mess" | "Sport";
+  scope: "global" | "faculty" | "batch";
+  targetFaculty?: string;
+  targetBatch?: string;
+  isPinned?: boolean;
+  authorName?: string;
+  designation?: string;
 };
-
-// Dummy Data
-const SAMPLE_EVENTS: Event[] = [
-  {
-    id: 1,
-    title: "Sophee Orientation",
-    date: new Date(2025, 11, 5),
-    location: "Ghulam Ishaq Khan Auditorium",
-    type: "Academic",
-  },
-  {
-    id: 2,
-    title: "CS 101 Midterm",
-    date: new Date(2025, 11, 12),
-    location: "Lecture Hall 3",
-    type: "Academic",
-  },
-  {
-    id: 3,
-    title: "All Pakistan Coding Comp",
-    date: new Date(2025, 11, 15),
-    location: "FCI Lab 6",
-    type: "Social",
-  },
-  {
-    id: 4,
-    title: "Special Biryani Dinner",
-    date: new Date(2025, 11, 12),
-    location: "Mess 1 & 2",
-    type: "Mess",
-  },
-];
 
 export default function Home() {
   useAuthProtection(); // Protect the home page
+  const { userProfile } = useAuth();
   
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
+  const [events, setEvents] = useState<Event[]>([]);
+  const [loading, setLoading] = useState(true);
 
   // --- Calendar Logic ---
   const year = currentDate.getFullYear();
@@ -69,24 +49,105 @@ export default function Home() {
   const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1));
   const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1));
 
+  // Fetch events from Firestore
+  useEffect(() => {
+    if (!userProfile) return;
+
+    const eventsRef = collection(db, "events");
+    
+    const unsubscribe = onSnapshot(eventsRef, (snapshot) => {
+      const fetchedEvents: Event[] = [];
+      
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        fetchedEvents.push({
+          id: doc.id,
+          title: data.title || "",
+          date: data.date || new Date(),
+          location: data.location || "",
+          type: data.type || "Notice",
+          scope: data.scope || "global",
+          targetFaculty: data.targetFaculty,
+          targetBatch: data.targetBatch,
+          isPinned: data.isPinned || false,
+          authorName: data.authorName || "",
+          designation: data.designation || "",
+        });
+      });
+
+      // Filter events based on scope and targetFaculty/targetBatch
+      const filteredEvents = fetchedEvents.filter((event) => {
+        // Show if global scope
+        if (event.scope === "global") return true;
+        
+        // Show if matches user's faculty and batch
+        if (!userProfile) return false;
+        
+        if (
+          event.scope === "faculty" &&
+          event.targetFaculty === (userProfile as any).faculty &&
+          event.targetBatch === (userProfile as any).batch
+        ) {
+          return true;
+        }
+        
+        return false;
+      });
+
+      // Sort: pinned first, then by date (soonest first)
+      filteredEvents.sort((a, b) => {
+        // First sort by pinned status
+        if (a.isPinned && !b.isPinned) return -1;
+        if (!a.isPinned && b.isPinned) return 1;
+        
+        // Then sort by date
+        const dateA = a.date instanceof Timestamp ? a.date.toDate() : new Date(a.date);
+        const dateB = b.date instanceof Timestamp ? b.date.toDate() : new Date(b.date);
+        return dateA.getTime() - dateB.getTime();
+      });
+
+      setEvents(filteredEvents);
+      setLoading(false);
+    }, (error) => {
+      console.error("Error fetching events:", error);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [userProfile]);
+
+  // Helper function to convert Firestore Timestamp to Date
+  const getEventDate = (eventDate: Timestamp | Date): Date => {
+    if (eventDate instanceof Timestamp) {
+      return eventDate.toDate();
+    }
+    return new Date(eventDate);
+  };
+
   const getEventsForDay = (day: number) => {
-    return SAMPLE_EVENTS.filter((e) => {
+    return events.filter((e) => {
+      const eventDate = getEventDate(e.date);
       return (
-        e.date.getDate() === day &&
-        e.date.getMonth() === month &&
-        e.date.getFullYear() === year
+        eventDate.getDate() === day &&
+        eventDate.getMonth() === month &&
+        eventDate.getFullYear() === year
       );
     });
   };
 
   const displayEvents = selectedDate
-    ? SAMPLE_EVENTS.filter(
-        (e) =>
-          e.date.getDate() === selectedDate.getDate() &&
-          e.date.getMonth() === selectedDate.getMonth() &&
-          e.date.getFullYear() === selectedDate.getFullYear()
-      )
-    : SAMPLE_EVENTS.filter((e) => e.date >= new Date());
+    ? events.filter((e) => {
+        const eventDate = getEventDate(e.date);
+        return (
+          eventDate.getDate() === selectedDate.getDate() &&
+          eventDate.getMonth() === selectedDate.getMonth() &&
+          eventDate.getFullYear() === selectedDate.getFullYear()
+        );
+      })
+    : events.filter((e) => {
+        const eventDate = getEventDate(e.date);
+        return eventDate >= new Date();
+      });
 
   return (
     <div className="min-h-screen bg-slate-950 relative overflow-hidden font-sans text-white pb-24">
@@ -231,46 +292,106 @@ export default function Home() {
 
           <div className="space-y-3">
             <AnimatePresence mode="popLayout">
-              {displayEvents.length > 0 ? (
-                displayEvents.map((event, index) => (
+              {loading ? (
+                // Skeleton Loader
+                Array.from({ length: 3 }).map((_, index) => (
                   <motion.div
-                    key={event.id}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: index * 0.1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-slate-900/40 backdrop-blur-md p-4 rounded-2xl border border-white/5 hover:border-blue-500/30 transition-all group relative overflow-hidden"
+                    key={`skeleton-${index}`}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="bg-slate-900/40 backdrop-blur-md p-4 rounded-2xl border border-white/5"
                   >
-                    {/* Subtle gradient hover effect */}
-                    <div className="absolute inset-0 bg-gradient-to-r from-blue-600/0 via-blue-600/0 to-blue-600/0 group-hover:via-blue-600/5 transition-all duration-500" />
-
-                    <div className="flex justify-between items-start relative z-10">
-                      <div>
-                        <h3 className="font-semibold text-white text-lg">{event.title}</h3>
-                        <div className="flex items-center text-xs text-slate-400 mt-2 gap-3">
-                          <span className="flex items-center gap-1.5 bg-slate-800/50 px-2 py-1 rounded-md">
-                            <Clock size={12} className="text-blue-400" />
-                            {event.date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                          <span className="flex items-center gap-1.5 bg-slate-800/50 px-2 py-1 rounded-md">
-                            <MapPin size={12} className="text-cyan-400" />
-                            {event.location}
-                          </span>
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <div className="h-5 bg-slate-800/50 rounded-md w-3/4 mb-3 animate-pulse"></div>
+                        <div className="flex items-center gap-3">
+                          <div className="h-6 bg-slate-800/50 rounded-md w-20 animate-pulse"></div>
+                          <div className="h-6 bg-slate-800/50 rounded-md w-24 animate-pulse"></div>
                         </div>
                       </div>
-                      
-                      {/* Neon Pills */}
-                      <span className={`
-                        text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider border
-                        ${event.type === 'Academic' ? 'bg-purple-500/10 text-purple-300 border-purple-500/20' : ''}
-                        ${event.type === 'Social' ? 'bg-orange-500/10 text-orange-300 border-orange-500/20' : ''}
-                        ${event.type === 'Mess' ? 'bg-green-500/10 text-green-300 border-green-500/20' : ''}
-                      `}>
-                        {event.type}
-                      </span>
+                      <div className="h-6 w-16 bg-slate-800/50 rounded-full animate-pulse"></div>
                     </div>
                   </motion.div>
                 ))
+              ) : displayEvents.length > 0 ? (
+                displayEvents.map((event, index) => {
+                  const eventDate = getEventDate(event.date);
+                  const getTypeColor = (type: string) => {
+                    switch (type) {
+                      case "Quiz":
+                        return "bg-red-500/10 text-red-300 border-red-500/20";
+                      case "Holiday":
+                        return "bg-green-500/10 text-green-300 border-green-500/20";
+                      case "Notice":
+                        return "bg-blue-500/10 text-blue-300 border-blue-500/20";
+                      case "Academic":
+                        return "bg-purple-500/10 text-purple-300 border-purple-500/20";
+                      case "Social":
+                        return "bg-orange-500/10 text-orange-300 border-orange-500/20";
+                      case "Mess":
+                        return "bg-green-500/10 text-green-300 border-green-500/20";
+                      case "Sport":
+                        return "bg-yellow-500/10 text-yellow-300 border-yellow-500/20";
+                      default:
+                        return "bg-slate-500/10 text-slate-300 border-slate-500/20";
+                    }
+                  };
+
+                  return (
+                    <motion.div
+                      key={event.id}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: index * 0.1 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      className="bg-slate-900/40 backdrop-blur-md p-4 rounded-2xl border border-white/5 hover:border-blue-500/30 transition-all group relative overflow-hidden"
+                    >
+                      {/* Subtle gradient hover effect */}
+                      <div className="absolute inset-0 bg-gradient-to-r from-blue-600/0 via-blue-600/0 to-blue-600/0 group-hover:via-blue-600/5 transition-all duration-500" />
+
+                      <div className="flex justify-between items-start relative z-10">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            {event.isPinned && (
+                              <Pin size={14} className="text-yellow-400 fill-yellow-400" />
+                            )}
+                            <h3 className="font-semibold text-white text-lg">{event.title}</h3>
+                          </div>
+                          <div className="flex items-center text-xs text-slate-400 mt-2 gap-3 flex-wrap">
+                            <span className="flex items-center gap-1.5 bg-slate-800/50 px-2 py-1 rounded-md">
+                              <Clock size={12} className="text-blue-400" />
+                              {eventDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                            {event.location && (
+                              <span className="flex items-center gap-1.5 bg-slate-800/50 px-2 py-1 rounded-md">
+                                <MapPin size={12} className="text-cyan-400" />
+                                {event.location}
+                              </span>
+                            )}
+                          </div>
+                          {/* Author Tag */}
+                          {event.authorName && (
+                            <div className="mt-3 text-xs text-slate-500">
+                              Posted by: <span className="text-slate-400">{event.authorName}</span>
+                              {event.designation && (
+                                <span className="text-slate-500"> ({event.designation})</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        
+                        {/* Type Badge */}
+                        <span className={`
+                          text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider border
+                          ${getTypeColor(event.type)}
+                        `}>
+                          {event.type}
+                        </span>
+                      </div>
+                    </motion.div>
+                  );
+                })
               ) : (
                 <motion.div 
                   initial={{ opacity: 0 }} 
