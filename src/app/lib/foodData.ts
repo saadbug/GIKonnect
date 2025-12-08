@@ -3,6 +3,7 @@ export type Review = {
     itemId: string; // Links review to specific food item
     userEmail: string;
     userName: string;
+    userLabel?: string;
     rating: number;
     comment: string;
     timestamp: any; // Firestore timestamp
