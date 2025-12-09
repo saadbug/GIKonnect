@@ -69,11 +69,39 @@ export type Review = {
   };
   
   export const MESS_MENU = {
-    Monday: { Breakfast: "Omelette & Paratha", Lunch: "Chicken Karahi", Dinner: "Daal Mash" },
-    Tuesday: { Breakfast: "Aloo Paratha", Lunch: "Biryani", Dinner: "Vegetable Mix" },
-    Wednesday: { Breakfast: "French Toast", Lunch: "Curry Pakora", Dinner: "Chicken Pulao" },
-    Thursday: { Breakfast: "Chana Masala", Lunch: "Beef Haleem", Dinner: "Chapli Kabab" },
-    Friday: { Breakfast: "Halwa Puri", Lunch: "Jumma Biryani Special", Dinner: "BBQ Night" },
-    Saturday: { Breakfast: "Anda Ghotala", Lunch: "Lobia", Dinner: "Burger & Fries" },
-    Sunday: { Breakfast: "Nihari", Lunch: "Pulao", Dinner: "Leftovers / Closed" },
+    Monday: { 
+      Breakfast: "Cheese Omelette - Paratha - Chai", 
+      Lunch: "Chicken Haleem - Brown Pyaaz (Onions) - Roti", 
+      Dinner: "Chicken Biryani - Raita" 
+    },
+    Tuesday: { 
+      Breakfast: "Chicken Sausage - Bread - Chai", 
+      Lunch: "Daal Chana - Aloo Cutlets - Roti", 
+      Dinner: "Chicken Fried - Savour Rice - Chai" 
+    },
+    Wednesday: { 
+      Breakfast: "French Toast - Chai", 
+      Lunch: "Chana Pulao - Raita", 
+      Dinner: "Chicken Achari - Roti - Custard Jelly" 
+    },
+    Thursday: { 
+      Breakfast: "Paratha - Chicken Qeema - Chai", 
+      Lunch: "Chicken Chapli Kabab - Mix Daal - Roti - Fruit", 
+      Dinner: "Chicken Shashlik - White Rice" 
+    },
+    Friday: { 
+      Breakfast: "Aloo Paratha - Dahi (Yogurt) - Chai", 
+      Lunch: "Sada Pulao - Shami Kabab - Raita", 
+      Dinner: "Makhni Handi - Roti" 
+    },
+    Saturday: { 
+      Breakfast: "Halwa Puri - Safed Chana - Chai", 
+      Lunch: "Chicken Kabuli Pulao - Raita", 
+      Dinner: "Chicken Qorma - Roti" 
+    },
+    Sunday: { 
+      Breakfast: "Anda Fry - Omelette - Bread - Jam - Chai", 
+      Lunch: "Chicken Pulao - Raita", 
+      Dinner: "Chicken Vegetable Macaroni - Ketchup" 
+    },
   };
