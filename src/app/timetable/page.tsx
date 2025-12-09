@@ -7,7 +7,7 @@ import { doc, getDoc, setDoc, serverTimestamp, collection, query, where, orderBy
 import { db } from "@/app/lib/firebase";
 import { 
   Clock, MapPin, Edit3, Save, Plus, Trash2, Calendar, BookOpen, 
-  AlertCircle, Loader2, LayoutGrid, List, FileText, X, Coffee
+  AlertCircle, Loader2, LayoutGrid, List, FileText, X, Coffee, CheckCircle2, AlertTriangle
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
