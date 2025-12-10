@@ -37,7 +37,7 @@ export default function Navigation() {
   });
 
   // Don't show nav on login/onboarding
-  if (pathname === "/login" || pathname === "/onboarding") return null;
+  if (pathname === "/login" || pathname === "/onboarding" || pathname === "/signup") return null;
 
   return (
     <>

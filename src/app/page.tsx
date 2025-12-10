@@ -8,6 +8,7 @@ import { useAuth } from "@/context/AuthContext";
 import { collection, onSnapshot, Timestamp, query, orderBy, deleteDoc, doc } from "firebase/firestore";
 import { db } from "@/app/lib/firebase";
 import Link from "next/link";
+import LavaBackground from "@/components/LavaBackground";
 
 // --- Types ---
 type Event = {

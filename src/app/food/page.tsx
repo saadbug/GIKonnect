@@ -5,10 +5,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import { VENUES, MENU_ITEMS, MESS_MENU, MenuItem, Venue, Review, MessComment } from "../lib/foodData";
 import { Star, X, ChefHat, Sparkles, Phone, Trash2, Send, ChevronRight, Clock, Heart, Users, Utensils } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import { useAuthProtection } from "@/hooks/useAuthProtection";
 import { collection, addDoc, query, onSnapshot, serverTimestamp, deleteDoc, doc, orderBy } from "firebase/firestore";
 import { db } from "@/app/lib/firebase";
 
 export default function FoodPage() {
+    useAuthProtection();
   const { user, userProfile } = useAuth() as any;
   
   const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);

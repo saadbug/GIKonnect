@@ -27,15 +27,16 @@ export default function LoginPage() {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
-      // 2. Check Verification
-      if (!user.emailVerified && user.email !== "admin@giki.edu.pk") { // <--- Add this exception
-        await signOut(auth);
+      // 2. CRITICAL SECURITY CHECK: Email Verification
+      // If not verified AND not the specific admin account -> Force Logout & Error
+      if (!user.emailVerified && user.email !== "admin@giki.edu.pk") {
+        await signOut(auth); // Kick them out immediately
         setError("Please verify your email first. Check your GIKI Outlook.");
         setLoading(false);
-        return;
+        return; // Stop execution
       }
 
-      // 3. CHECK FIRESTORE PROFILE (The Fix)
+      // 3. Check Firestore Profile
       const userDoc = await getDoc(doc(db, "users", user.uid));
 
       if (userDoc.exists()) {

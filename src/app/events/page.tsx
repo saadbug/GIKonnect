@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Heart, MessageCircle, Send, Bookmark, MoreHorizontal, Smile } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
+import { useAuthProtection } from "@/hooks/useAuthProtection";
 
 // --- Mock Data ---
 const MOCK_EVENTS = [
@@ -43,6 +44,7 @@ const MOCK_EVENTS = [
 ];
 
 export default function EventsPage() {
+    useAuthProtection();
   return (
     <div className="min-h-screen bg-black text-white font-sans pb-24 relative">
       
