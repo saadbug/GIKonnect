@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuthProtection } from "@/hooks/useAuthProtection";
+import { useAuth } from "@/context/AuthContext"; // <--- ADD THIS IMPORT
 import {
   Calendar,
   MapPin,
@@ -42,7 +43,12 @@ const EVENT_TYPES = ["Quiz", "Assignment", "Project", "Notice", "Session", "Holi
 const BATCH_OPTIONS = Array.from({ length: 50 }, (_, i) => `Batch ${i + 1}`);
 
 export default function AdminDashboard() {
-  const { user, userProfile, loading: authLoading } = useAuthProtection();
+  // 1. Enforce Security (Redirects if unauthorized)
+  useAuthProtection();
+
+  // 2. Get User Data from Context directly
+  const { user, userProfile, loading: authLoading } = useAuth();
+  
   const router = useRouter();
 
   const [title, setTitle] = useState("");
@@ -602,4 +608,3 @@ export default function AdminDashboard() {
     </div>
   );
 }
-
