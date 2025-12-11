@@ -6,15 +6,15 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { uid, code } = body;
 
-    // --- DEBUG LOGS (Check your VS Code Terminal) ---
-    console.log("🔍 Verify Request Received:");
+    // --- SERVER LOGS (Check VS Code Terminal) ---
+    console.log("🔍 [Verify API] Request Received:");
     console.log("   - UID:", uid);
-    console.log("   - Code:", code);
-    // ------------------------------------------------
+    console.log("   - Code Input:", code);
+    // -------------------------------------------
 
-    // 1. Validate Input
+    // 1. Validate Input Presence
     if (!uid || !code) {
-      console.log("❌ Missing Data: uid or code is empty");
+      console.log("❌ [Verify API] Missing Data: uid or code is empty");
       return NextResponse.json({ error: "Missing User ID (uid) or Verification Code" }, { status: 400 });
     }
 
@@ -23,20 +23,29 @@ export async function POST(request: Request) {
     const docSnap = await docRef.get();
 
     if (!docSnap.exists) {
-      console.log("❌ No OTP found for this UID. It might have expired or never sent.");
+      console.log("❌ [Verify API] No OTP found in database for this UID.");
       return NextResponse.json({ error: "Invalid or expired code. Please request a new one." }, { status: 400 });
     }
 
     const data = docSnap.data();
-    console.log("   - Stored Code:", data?.code);
+
+    // 🛑 TYPESCRIPT FIX: Explicitly check if data is undefined
+    if (!data) {
+        return NextResponse.json({ error: "System Error: OTP data is corrupted." }, { status: 500 });
+    }
+
+    console.log("   - Database stored code:", data?.code);
 
     // 3. Validate Match
-    if (data?.code !== code) {
+    if (String(data?.code).trim() !== String(code).trim()) {
+      console.log("❌ [Verify API] Code Mismatch!");
       return NextResponse.json({ error: "Incorrect code. Please try again." }, { status: 400 });
     }
 
     // 4. Validate Expiry
-    if (new Date() > data.expiresAt.toDate()) {
+    // We use optional chaining here just to be double-safe
+    if (data.expiresAt && new Date() > data.expiresAt.toDate()) {
+      console.log("❌ [Verify API] Code Expired.");
       return NextResponse.json({ error: "Code has expired. Please signup again." }, { status: 400 });
     }
 
@@ -45,15 +54,15 @@ export async function POST(request: Request) {
       emailVerified: true,
     });
 
-    console.log("✅ User Verified Successfully!");
+    console.log("✅ [Verify API] User Verified Successfully!");
 
-    // 6. Cleanup
+    // 6. Cleanup (Delete used code)
     await docRef.delete();
 
     return NextResponse.json({ success: true });
 
   } catch (error: any) {
-    console.error("🔥 Verification Server Error:", error);
+    console.error("🔥 [Verify API] Server Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
