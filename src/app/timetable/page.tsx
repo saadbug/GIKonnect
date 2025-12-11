@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import PageLoader from "@/components/PageLoader";
 import { useAuth } from "@/context/AuthContext";
 import { useAuthProtection } from "@/hooks/useAuthProtection";
 import { doc, getDoc, setDoc, serverTimestamp, collection, query, where, orderBy, onSnapshot, addDoc, deleteDoc } from "firebase/firestore";
@@ -497,7 +498,9 @@ export default function TimetablePage() {
     );
   };
 
-  if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center"><Loader2 className="animate-spin text-blue-500" /></div>;
+  if (loading) {
+    return <PageLoader text="Verifying Student ID..." />;
+  }
 
   const nextQuiz = assessments.find(a => a.type === "Quiz");
   const nextAssignment = assessments.find(a => a.type === "Assignment");

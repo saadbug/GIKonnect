@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import PageLoader from "@/components/PageLoader";
 import { useRouter } from "next/navigation";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../lib/firebase";
@@ -123,11 +124,7 @@ export default function AdminDashboard() {
   }
 
   if (authLoading || !userProfile) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-      </div>
-    );
+    return <PageLoader text="Accessing Admin Panel..." />;
   }
 
   const isAdmin = userProfile.role === "admin";
