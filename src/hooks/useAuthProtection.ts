@@ -3,8 +3,6 @@
 import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
-import { signOut } from "firebase/auth";
-import { auth } from "@/app/lib/firebase";
 
 export function useAuthProtection() {
   const { user, userProfile, loading } = useAuth();
@@ -16,37 +14,37 @@ export function useAuthProtection() {
 
     const publicRoutes = ["/login", "/signup"];
     const isPublicRoute = publicRoutes.includes(pathname);
+    const isVerifyPage = pathname === "/verify-email"; 
     const isAdmin = user?.email === "admin@giki.edu.pk"; 
 
-    // 1. UNAUTHENTICATED USER TRYING TO ACCESS PRIVATE PAGE
+    // 1. UNAUTHENTICATED? -> Force Login
+    // If they aren't logged in and aren't on a public page, kick them to login.
     if (!user && !isPublicRoute) {
       router.push("/login");
       return;
     }
 
-    // 2. THE FIREWALL: AUTHENTICATED BUT UNVERIFIED
-    // This catches the "Second Click" race condition.
+    // 2. UNVERIFIED? -> Force Verification Page
+    // If logged in but NOT verified (and not Admin):
     if (user && !user.emailVerified && !isAdmin) {
-        console.log("⛔ SECURITY: Unverified user detected. Force signing out.");
-        
-        // A. Kill the session immediately
-        signOut(auth).then(() => {
-            // B. Send them back to login with a clear state
-            router.push("/login");
-        });
+        // If they are NOT already on the verify page, send them there.
+        if (!isVerifyPage) {
+            router.push("/verify-email");
+        }
+        // If they ARE on the verify page, let them stay so they can enter the code.
         return;
     }
 
-    // 3. ONBOARDING CHECK (Verified Users Only)
-    // If they have no profile data yet, send to onboarding
+    // 3. NO PROFILE? -> Force Onboarding
+    // They are verified now. If they don't have a profile doc, send to onboarding.
     if (user && user.emailVerified && !userProfile && pathname !== "/onboarding") {
       router.push("/onboarding");
       return;
     }
 
-    // 4. PREVENT RE-LOGIN (Verified Users Only)
-    // If they are logged in + verified + have profile, kick them out of login/signup pages
-    if (user && user.emailVerified && userProfile && isPublicRoute) {
+    // 4. FULLY SETUP? -> Send Home
+    // If they are fully verified and have a profile, don't let them see login/signup/verify pages.
+    if (user && user.emailVerified && userProfile && (isPublicRoute || isVerifyPage || pathname === "/onboarding")) {
         router.push("/");
     }
 
