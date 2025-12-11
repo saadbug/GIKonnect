@@ -8,7 +8,7 @@ import { getStudentName } from "../lib/studentData"; // Import the data lookup
 import { 
   User, GraduationCap, Building2, ChevronRight, 
   Loader2, Lock, CheckCircle2, Sparkles, ShieldCheck, BadgeCheck, AlertCircle
-} from "lucide-react";
+} from "lucide-react";  
 import { motion, AnimatePresence } from "framer-motion";
 
 const FACULTY_OPTIONS = [
@@ -142,8 +142,6 @@ export default function OnboardingPage() {
       if (!user) return;
 
       let finalFaculty = faculty;
-      
-      // Append Section to Faculty string if applicable
       if (role === "student" && section) {
         finalFaculty = `${faculty} - ${section}`;
       }
@@ -153,15 +151,18 @@ export default function OnboardingPage() {
         regNumber: role === "student" ? regNumber : null,
         batch,
         faculty: finalFaculty,
-        section, // Save raw section too for easier querying later
+        section,
         designation: role === "admin" ? designation : "Student",
         email: user.email,
         role,
         createdAt: serverTimestamp(),
       });
 
-      // Animation delay before redirect
-      setTimeout(() => router.push("/"), 1000);
+      // --- THE FIX IS HERE ---
+      // Use window.location.href to FORCE a fresh fetch of the user profile
+      setTimeout(() => {
+          window.location.href = "/"; 
+      }, 1000);
       
     } catch (error: any) {
       console.error(error);
