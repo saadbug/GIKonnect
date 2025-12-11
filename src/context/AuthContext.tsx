@@ -37,6 +37,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        // Force token refresh to ensure emailVerified is up-to-date
+        try {
+          await firebaseUser.getIdTokenResult(true);
+          await firebaseUser.reload();
+        } catch (error) {
+          console.error("Error refreshing token:", error);
+        }
+      }
+
       setUser(firebaseUser);
 
       if (firebaseUser) {
@@ -52,8 +62,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
             const userProfile: UserProfile = {
               fullName: data.fullName || "",
               email: data.email || firebaseUser.email || "",
-              role: (data.role === "admin" || data.role === "cr" || data.role === "student") 
-                ? data.role 
+              role: (data.role === "admin" || data.role === "cr" || data.role === "student")
+                ? data.role
                 : "student",
               faculty: data.faculty || "",
               batch: data.batch || null,

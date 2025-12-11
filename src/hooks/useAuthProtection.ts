@@ -1,10 +1,10 @@
-// src/hooks/useAuthProtection.ts
-
 "use client";
 
 import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
+import { signOut } from "firebase/auth";
+import { auth } from "@/app/lib/firebase";
 
 export function useAuthProtection() {
   const { user, userProfile, loading } = useAuth();
@@ -12,44 +12,43 @@ export function useAuthProtection() {
   const pathname = usePathname();
 
   useEffect(() => {
-    // 1. Don't redirect while loading
-    if (loading) {
-      return;
-    }
+    if (loading) return;
 
-    // Public routes that don't need authentication OR verification
-    // NOTE: /onboarding is public because users land here immediately after verified login
-    const publicRoutes = ["/login", "/signup", "/onboarding"];
+    const publicRoutes = ["/login", "/signup"];
     const isPublicRoute = publicRoutes.includes(pathname);
+    const isAdmin = user?.email === "admin@giki.edu.pk"; 
 
-    // If on a public route, don't redirect (let them use the page)
-    if (isPublicRoute) {
-      return;
-    }
-
-    // A. Check Authentication
-    if (!user) {
+    // 1. UNAUTHENTICATED USER TRYING TO ACCESS PRIVATE PAGE
+    if (!user && !isPublicRoute) {
       router.push("/login");
       return;
     }
 
-    // B. Check Verification (Crucial Step)
-    const isAdmin = user.email === "admin@giki.edu.pk"; // Your Admin Exception
-    
-    if (!user.emailVerified && !isAdmin) {
-      // If unverified, sign them out and redirect to login (where they will see the prompt)
-      // This is a safety measure if they somehow bypass the manual signout during signup.
-      // Firebase automatically signs them back in on refresh if you don't handle it.
-      router.push("/login?verify=true"); 
-      return;
+    // 2. THE FIREWALL: AUTHENTICATED BUT UNVERIFIED
+    // This catches the "Second Click" race condition.
+    if (user && !user.emailVerified && !isAdmin) {
+        console.log("⛔ SECURITY: Unverified user detected. Force signing out.");
+        
+        // A. Kill the session immediately
+        signOut(auth).then(() => {
+            // B. Send them back to login with a clear state
+            router.push("/login");
+        });
+        return;
     }
 
-    // C. Check Profile (Onboarding)
+    // 3. ONBOARDING CHECK (Verified Users Only)
+    // If they have no profile data yet, send to onboarding
     if (user && user.emailVerified && !userProfile && pathname !== "/onboarding") {
       router.push("/onboarding");
       return;
     }
-  }, [user, userProfile, loading, router, pathname]);
 
-  return { user, userProfile, loading };
+    // 4. PREVENT RE-LOGIN (Verified Users Only)
+    // If they are logged in + verified + have profile, kick them out of login/signup pages
+    if (user && user.emailVerified && userProfile && isPublicRoute) {
+        router.push("/");
+    }
+
+  }, [user, userProfile, loading, router, pathname]);
 }

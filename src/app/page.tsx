@@ -1,14 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ChevronLeft, ChevronRight, MapPin, Clock, Calendar as CalendarIcon, Sparkles, Pin, Plus, Trash2, Filter, X, Globe, Target, User, Mail, ShieldAlert } from "lucide-react";
+import { ChevronLeft, ChevronRight, MapPin, Clock, Calendar as CalendarIcon, Sparkles, Pin, Plus, Trash2, Filter, X, Globe, Target, User, Mail, ShieldAlert, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuthProtection } from "@/hooks/useAuthProtection";
 import { useAuth } from "@/context/AuthContext";
 import { collection, onSnapshot, Timestamp, query, orderBy, deleteDoc, doc } from "firebase/firestore";
 import { db } from "@/app/lib/firebase";
 import Link from "next/link";
-import LavaBackground from "@/components/LavaBackground";
 
 // --- Types ---
 type Event = {
@@ -33,18 +32,17 @@ const FACULTIES = [
   "Artificial Intelligence", "Software Engineering", "Chemical Engineering",
   "Civil Engineering", "Data Science", "Cyber Security"
 ];
-// Updated to specific batches
 const BATCHES = ["Batch 32", "Batch 33", "Batch 34", "Batch 35"];
 
 export default function Home() {
   useAuthProtection();
   
-  const { userProfile } = useAuth() as any;
+  const { userProfile, loading: authLoading } = useAuth() as any;
   
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
   const [events, setEvents] = useState<Event[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [dataLoading, setDataLoading] = useState(true);
 
   // Admin Filter State
   const [showAdminFilter, setShowAdminFilter] = useState(false);
@@ -71,7 +69,7 @@ export default function Home() {
     try {
       await deleteDoc(doc(db, "events", deleteTarget));
       setDeleteTarget(null);
-      setSelectedEvent(null); // Close detail view if open
+      setSelectedEvent(null);
     } catch (err) {
       console.error("Error deleting:", err);
       alert("Failed to delete event.");
@@ -141,10 +139,10 @@ export default function Home() {
       });
 
       setEvents(filteredEvents);
-      setLoading(false);
+      setDataLoading(false);
     }, (error) => {
       console.error("Error fetching events:", error);
-      setLoading(false);
+      setDataLoading(false);
     });
 
     return () => unsubscribe();
@@ -181,10 +179,15 @@ export default function Home() {
     }
   };
 
+  // --- LOADING GATE (Prevents Flash) ---
+  if (authLoading || !userProfile) {
+    return <LiquidLoader />;
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 relative overflow-hidden font-sans text-white pb-24">
       
-      {/* Active Lava Lamp Background */}
+      {/* Background */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <motion.div 
           className="absolute -top-[10%] -left-[10%] w-[500px] h-[500px] bg-blue-600/20 rounded-full blur-[120px]"
@@ -262,14 +265,13 @@ export default function Home() {
           )}
         </AnimatePresence>
 
-        {/* Glass Calendar Card */}
+        {/* Calendar */}
         <motion.div 
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.5 }}
           className="bg-slate-900/40 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/10 p-6 mb-8"
         >
-          {/* Month Navigation */}
           <div className="flex justify-between items-center mb-6">
             <button onClick={prevMonth} className="p-2 hover:bg-white/10 rounded-full transition text-slate-300">
               <ChevronLeft size={20} />
@@ -282,7 +284,6 @@ export default function Home() {
             </button>
           </div>
 
-          {/* Days Grid */}
           <div className="grid grid-cols-7 gap-1 mb-2">
             {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => (
               <div key={day} className="text-center text-xs font-bold text-slate-500 uppercase tracking-wider py-2">
@@ -345,12 +346,11 @@ export default function Home() {
 
           <div className="space-y-3">
             <AnimatePresence mode="popLayout">
-              {loading ? (
+              {dataLoading ? (
                 <div className="text-center py-10 text-slate-500">Loading events...</div>
               ) : displayEvents.length > 0 ? (
                 displayEvents.map((event, index) => {
                     const isGlobal = event.scope === 'global';
-                    // UPDATED DELETE LOGIC: Admin can delete ANYTHING. CR can delete their faculty stuff.
                     const canDelete = 
                         userProfile.role === 'admin' || 
                         (userProfile.role === 'cr' && !isGlobal && event.targetFaculty === userProfile.faculty);
@@ -361,7 +361,7 @@ export default function Home() {
                         initial={{ opacity: 0, x: -20 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: index * 0.1 }}
-                        onClick={() => setSelectedEvent(event)} // Open Details Modal
+                        onClick={() => setSelectedEvent(event)}
                         className={`cursor-pointer bg-slate-900/40 backdrop-blur-md p-4 rounded-2xl border transition-all group relative overflow-hidden ${isGlobal ? "border-blue-500/20 hover:border-blue-500/40" : "border-orange-500/20 hover:border-orange-500/40"}`}
                         >
                         <div className={`absolute top-0 right-0 px-3 py-1 rounded-bl-xl text-[10px] uppercase font-bold tracking-wider ${isGlobal ? "bg-blue-500/20 text-blue-300" : "bg-orange-500/20 text-orange-300"}`}>
@@ -441,7 +441,6 @@ export default function Home() {
               className="bg-slate-900/90 backdrop-blur-xl w-full max-w-lg rounded-3xl border border-white/10 overflow-hidden shadow-2xl relative"
               onClick={e => e.stopPropagation()}
             >
-              {/* Header Splash */}
               <div className={`h-32 bg-gradient-to-br w-full relative ${selectedEvent.scope === 'global' ? 'from-blue-600/30 to-indigo-600/30' : 'from-orange-600/30 to-purple-600/30'}`}>
                  <div className="absolute inset-0 bg-[url('/noise.png')] opacity-20"></div>
                  <button onClick={() => setSelectedEvent(null)} className="absolute top-4 right-4 bg-black/20 p-2 rounded-full hover:bg-black/40 text-white transition">
@@ -455,9 +454,7 @@ export default function Home() {
                  </div>
               </div>
 
-              {/* Body */}
               <div className="p-6 space-y-6">
-                 {/* Metadata Grid */}
                  <div className="grid grid-cols-2 gap-4">
                     <div className="bg-slate-800/50 p-3 rounded-xl border border-slate-700/50">
                        <p className="text-xs text-slate-500 uppercase font-bold mb-1 flex items-center gap-1"><Clock size={12}/> Date & Time</p>
@@ -470,14 +467,12 @@ export default function Home() {
                     </div>
                  </div>
 
-                 {/* Description */}
                  <div className="bg-slate-800/30 p-4 rounded-xl border border-slate-700/50">
                     <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">
                        {selectedEvent.description || "No additional details provided."}
                     </p>
                  </div>
 
-                 {/* Target Info */}
                  {selectedEvent.scope === 'targeted' && (
                     <div className="flex items-center gap-2 p-3 bg-orange-500/10 border border-orange-500/20 rounded-xl">
                        <Target size={16} className="text-orange-400" />
@@ -487,7 +482,6 @@ export default function Home() {
                     </div>
                  )}
 
-                 {/* Author Info */}
                  <div className="border-t border-slate-800 pt-4 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                        <div className="h-10 w-10 bg-slate-700 rounded-full flex items-center justify-center text-slate-400">
@@ -512,7 +506,7 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      {/* --- DELETE CONFIRMATION MODAL --- */}
+      {/* --- DELETE CONFIRMATION --- */}
       <AnimatePresence>
         {deleteTarget && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
@@ -538,7 +532,7 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      {/* Floating Action Button for Admin/CR */}
+      {/* Floating Action Button */}
       {(userProfile?.role === 'admin' || userProfile?.role === 'cr') && (
         <div className="fixed bottom-6 right-6 z-50">
            <Link href="/admin">
@@ -552,6 +546,50 @@ export default function Home() {
            </Link>
         </div>
       )}
+    </div>
+  );
+}
+
+// --- COOL CUSTOM LOADER COMPONENT ---
+function LiquidLoader() {
+  return (
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center relative overflow-hidden">
+      {/* Background Glow */}
+      <div className="absolute inset-0 bg-blue-900/10 blur-3xl pointer-events-none" />
+      
+      <div className="relative">
+        {/* Ring 1 (Slow) */}
+        <motion.div 
+          animate={{ rotate: 360 }}
+          transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+          className="w-24 h-24 rounded-full border-b-2 border-r-2 border-blue-500/50 absolute top-0 left-0 blur-sm"
+        />
+        
+        {/* Ring 2 (Fast) */}
+        <motion.div 
+          animate={{ rotate: -360 }}
+          transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+          className="w-24 h-24 rounded-full border-t-2 border-l-2 border-cyan-400 absolute top-0 left-0"
+        />
+
+        {/* Center Pulse */}
+        <motion.div 
+          animate={{ scale: [1, 1.2, 1], opacity: [0.5, 1, 0.5] }}
+          transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
+          className="w-24 h-24 flex items-center justify-center"
+        >
+           <Sparkles className="text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.8)]" size={32} />
+        </motion.div>
+      </div>
+      
+      <motion.p 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.5 }}
+        className="absolute mt-32 text-slate-500 text-xs font-bold tracking-[0.2em] uppercase"
+      >
+        Syncing
+      </motion.p>
     </div>
   );
 }
