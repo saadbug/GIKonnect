@@ -3,10 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { createUserWithEmailAndPassword } from "firebase/auth"; // Removed sendEmailVerification/signOut
+import { createUserWithEmailAndPassword } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import { Mail, Lock, Eye, EyeOff, AlertCircle, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
+import AnimatedLogo from "@/components/AnimatedLogo";
 
 export default function SignUpPage() {
   const router = useRouter();
@@ -47,7 +48,7 @@ export default function SignUpPage() {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
-      // 3. Trigger OTP Email (Your New System)
+      // 3. Trigger OTP Email
       const res = await fetch("/api/auth/send-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -58,13 +59,10 @@ export default function SignUpPage() {
       });
 
       if (!res.ok) {
-        // If email fails, we should technically warn them, but the account is created.
-        // We push them to verify anyway; they can click "Resend" there if needed.
         console.error("Failed to send OTP email immediately.");
       }
 
       // 4. Redirect to OTP Entry Page
-      // We do NOT sign them out. They need to be logged in to verify.
       router.push("/verify-email");
       
     } catch (error: any) {
@@ -101,15 +99,18 @@ export default function SignUpPage() {
 
       <div className="w-full max-w-md relative z-10">
         
-        {/* Header */}
+        {/* --- CENTERED HEADER SECTION --- */}
         <motion.div 
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="text-center mb-8"
+          initial={{ opacity: 0, y: -20 }} 
+          animate={{ opacity: 1, y: 0 }} 
+          className="flex flex-col items-center text-center mb-8"
         >
-          <h1 className="text-4xl font-bold text-white tracking-tight drop-shadow-lg mb-2">
-            GIKonnect
-          </h1>
+           {/* ANIMATED LOGO CONTAINER */}
+           <div className="mb-4">
+             <AnimatedLogo size="lg" />
+          </div>
+
+         
           <p className="text-slate-400">
             Join the campus network.
           </p>
