@@ -3,7 +3,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-import { Loader2, CheckCircle2, ShieldCheck, Sparkles, ArrowRight } from "lucide-react";
+import { getStudentName } from "@/app/lib/studentData"; 
+import { Loader2, CheckCircle2, ShieldCheck, ArrowRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function VerifyEmailPage() {
@@ -11,13 +12,32 @@ export default function VerifyEmailPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  
+  // Identity State
+  const [studentName, setStudentName] = useState("Student");
+  const [batch, setBatch] = useState("");
+  
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
 
-  // Debug Log
   useEffect(() => {
-    if (!authLoading) console.log("👤 [Verify Page] Current User:", user);
-  }, [user, authLoading]);
+    if (user?.email) {
+      const match = user.email.match(/^u(\d{7})@giki\.edu\.pk$/i);
+      if (match) {
+        const regNo = match[1];
+        
+        // 1. Get Name
+        const detectedName = getStudentName(regNo);
+        if (detectedName) setStudentName(detectedName);
+
+        // 2. Get Batch
+        const year = parseInt(regNo.substring(0, 4));
+        if (!isNaN(year)) {
+            setBatch(`Batch ${year - 1990}`);
+        }
+      }
+    }
+  }, [user]);
 
   const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,17 +62,13 @@ export default function VerifyEmailPage() {
 
       const data = await res.json();
 
-      if (!res.ok) {
-        throw new Error(data.error || "Verification failed");
-      }
+      if (!res.ok) throw new Error(data.error || "Verification failed");
 
-      setSuccess(true); // Trigger success animation
+      setSuccess(true); 
 
-      // Refresh Token
       await user.reload();
       await user.getIdToken(true);
 
-      // Delay redirect slightly to show success animation
       setTimeout(() => router.push("/onboarding"), 2000);
 
     } catch (err: any) {
@@ -61,7 +77,6 @@ export default function VerifyEmailPage() {
     } 
   };
 
-  // Loading Screen
   if (authLoading) {
     return (
         <div className="min-h-screen bg-slate-950 flex items-center justify-center">
@@ -73,12 +88,9 @@ export default function VerifyEmailPage() {
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 relative overflow-hidden font-sans">
       
-      {/* --- LIVE BACKGROUND EFFECTS --- */}
+      {/* --- LIVE BACKGROUND --- */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        {/* Deep Space Gradient */}
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-blue-900/20 via-slate-950 to-slate-950" />
-        
-        {/* Floating Orbs */}
         <motion.div 
           className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-600/20 rounded-full blur-[128px]"
           animate={{ x: [0, 50, 0], y: [0, -50, 0], scale: [1, 1.2, 1] }}
@@ -89,8 +101,6 @@ export default function VerifyEmailPage() {
           animate={{ x: [0, -50, 0], y: [0, 50, 0], scale: [1, 1.1, 1] }}
           transition={{ duration: 15, repeat: Infinity, ease: "easeInOut", delay: 1 }}
         />
-
-        {/* Success Explosion (Only triggers on success) */}
         {success && (
             <motion.div 
                 initial={{ scale: 0, opacity: 0 }}
@@ -108,49 +118,56 @@ export default function VerifyEmailPage() {
         className="w-full max-w-md relative z-10"
       >
         <div className="bg-slate-900/40 backdrop-blur-2xl border border-white/10 rounded-3xl p-8 shadow-[0_0_50px_-12px_rgba(0,0,0,0.5)] relative overflow-hidden">
-            
-            {/* Top Shine Effect */}
             <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
 
             <div className="text-center mb-8">
+                {/* Icon */}
                 <motion.div 
                     initial={{ scale: 0 }}
                     animate={{ scale: 1 }}
                     transition={{ type: "spring", stiffness: 200, damping: 15 }}
-                    className={`mx-auto w-20 h-20 rounded-2xl flex items-center justify-center mb-6 shadow-lg transition-colors duration-500 ${success ? "bg-green-500/20 text-green-400 border border-green-500/30" : "bg-blue-600/20 text-blue-400 border border-blue-500/30"}`}
+                    className={`mx-auto w-16 h-16 rounded-2xl flex items-center justify-center mb-4 shadow-lg transition-colors duration-500 ${success ? "bg-green-500/20 text-green-400 border border-green-500/30" : "bg-blue-600/20 text-blue-400 border border-blue-500/30"}`}
                 >
                     {success ? (
-                        <CheckCircle2 size={40} className="drop-shadow-[0_0_10px_rgba(74,222,128,0.5)]" />
+                        <CheckCircle2 size={32} className="drop-shadow-[0_0_10px_rgba(74,222,128,0.5)]" />
                     ) : (
-                        <ShieldCheck size={40} className="drop-shadow-[0_0_10px_rgba(96,165,250,0.5)]" />
+                        <ShieldCheck size={32} className="drop-shadow-[0_0_10px_rgba(96,165,250,0.5)]" />
                     )}
                 </motion.div>
                 
-                <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">
-                    {success ? "Verified!" : "Security Check"}
+                {/* --- 1. WELCOME NAME --- */}
+                <h1 className="text-2xl font-bold text-white tracking-tight mb-2">
+                    {success ? "Identity Verified" : `Welcome, ${studentName}`}
                 </h1>
-                
-                <p className="text-slate-400 text-sm">
+
+                {/* --- 2. BATCH TAG --- */}
+                {!success && batch && (
+                    <div className="flex justify-center mb-6">
+                        <span className="bg-blue-500/10 text-blue-300 border border-blue-500/20 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider shadow-sm">
+                            {batch}
+                        </span>
+                    </div>
+                )}
+
+                {/* --- 3. EMAIL INSTRUCTION --- */}
+                <p className="text-slate-400 text-sm leading-relaxed">
                     {success 
                         ? "Redirecting you to onboarding..." 
-                        : <>We sent a 6-digit code to <br/><span className="text-blue-400 font-semibold">{user?.email}</span></>
+                        : <>Enter code sent at <br/><span className="text-blue-400 font-mono font-semibold bg-blue-500/5 px-2 py-0.5 rounded">{user?.email}</span></>
                     }
                 </p>
             </div>
 
             <form onSubmit={handleVerify} className="space-y-6">
-                
-                {/* --- HOLOGRAPHIC INPUT --- */}
                 <div className="relative group">
                     <div className={`absolute -inset-0.5 rounded-xl blur opacity-30 transition duration-500 group-hover:opacity-75 ${error ? "bg-red-600" : "bg-gradient-to-r from-blue-600 to-purple-600"}`}></div>
                     <input
                         type="text"
                         value={code}
                         onChange={(e) => {
-                            // Only allow numbers
                             const val = e.target.value.replace(/[^0-9]/g, '');
                             if (val.length <= 6) setCode(val);
-                            if (val.length === 6) setError(""); // Auto clear error
+                            if (val.length === 6) setError("");
                         }}
                         disabled={success || loading}
                         className={`
@@ -164,14 +181,11 @@ export default function VerifyEmailPage() {
                         `}
                         placeholder="000000"
                     />
-                    
-                    {/* Floating Label / Hint */}
                     <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none opacity-20">
                         {!code && <span className="text-4xl tracking-[0.5em]">______</span>}
                     </div>
                 </div>
 
-                {/* Error Message */}
                 <AnimatePresence>
                     {error && (
                         <motion.div 
@@ -185,7 +199,6 @@ export default function VerifyEmailPage() {
                     )}
                 </AnimatePresence>
 
-                {/* Action Button */}
                 <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
@@ -208,10 +221,8 @@ export default function VerifyEmailPage() {
                 </motion.button>
             </form>
 
-            {/* Footer */}
             <div className="mt-6 text-center">
                 <button className="text-xs text-slate-500 transition-colors flex items-center justify-center gap-1 mx-auto group">
-                    
                     Check your junk folder. It will most likely be there.
                 </button>
             </div>

@@ -84,3 +84,22 @@ body {
 .animate-blob-3 {
   animation: blob-bounce-3 18s infinite ease-in-out;
 }
+
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 👇 ADD THIS BLOCK AT THE BOTTOM */
+@layer base {
+  /* Hide scrollbar for Chrome, Safari and Opera */
+  body::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Hide scrollbar for IE, Edge and Firefox */
+  body {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+  }
+}

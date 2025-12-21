@@ -8,7 +8,7 @@ import { doc, getDoc } from "firebase/firestore";
 import { auth, db } from "../lib/firebase";
 import { 
   Mail, Lock, Eye, EyeOff, AlertCircle, Loader2, HelpCircle, 
-  CheckCircle2, XCircle, Unlock 
+  CheckCircle2, XCircle, Unlock, ArrowRight 
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import AnimatedLogo from "@/components/AnimatedLogo";
@@ -22,14 +22,17 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   
   // Validation State
-  const [isEmailValid, setIsEmailValid] = useState<boolean | null>(null); // null = not typed yet
+  const [isEmailValid, setIsEmailValid] = useState<boolean | null>(null); 
   const [isEmailTouched, setIsEmailTouched] = useState(false);
   
   // UI State
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState(""); 
   const [loading, setLoading] = useState(false);
-  const [loginSuccess, setLoginSuccess] = useState(false); // Triggers the lock animation
+  const [loginSuccess, setLoginSuccess] = useState(false);
+  
+  // 👇 NEW: Store the user's name for the animation
+  const [userName, setUserName] = useState(""); 
 
   // Clear stale sessions
   useEffect(() => {
@@ -48,7 +51,7 @@ export default function LoginPage() {
       } else {
         setIsEmailValid(false);
       }
-    }, 500); // 500ms delay so it doesn't flash red while typing
+    }, 500); 
     return () => clearTimeout(timer);
   }, [email]);
 
@@ -57,7 +60,6 @@ export default function LoginPage() {
     setError("");
     setSuccessMsg("");
 
-    // Instant validation check
     if (isEmailValid === false) {
       setError("Only @giki.edu.pk emails are allowed.");
       return;
@@ -80,30 +82,37 @@ export default function LoginPage() {
         return;
       }
 
-      // Check User Doc
+      // Check User Doc to get their Name
       const userDoc = await getDoc(doc(db, "users", user.uid));
       
-      // --- SUCCESS SEQUENCE ---
-      setLoading(false); 
-      setLoginSuccess(true); // Trigger Animation
+      // 👇 NEW: Extract name if profile exists
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        // Get just the first name for a cleaner look
+        const firstName = userData.fullName ? userData.fullName.split(" ")[0] : "Student";
+        setUserName(firstName);
+      } else {
+        setUserName(""); // No profile yet (will go to onboarding)
+      }
       
-      // Wait for animation (1.5s) then push
+      setLoading(false); 
+      setLoginSuccess(true); 
+      
       setTimeout(() => {
         if (userDoc.exists()) {
           router.push("/");
         } else {
           router.push("/onboarding");
         }
-      }, 1500);
+      }, 2000); // Increased slightly to 2s so they can read the name
 
     } catch (error: any) {
       console.error("Login error:", error);
       await signOut(auth);
       setLoading(false);
       
-      // Error Shake Logic handled by Framer Motion via 'error' state key
       if (error.code === "auth/invalid-credential" || error.code === "auth/user-not-found" || error.code === "auth/wrong-password") {
-        setError("Invalid email or password.");
+        setError("Invalid email or password. Did you sign up first?");
       } else if (error.code === "auth/too-many-requests") {
         setError("Too many attempts. Try again later.");
       } else {
@@ -141,7 +150,6 @@ export default function LoginPage() {
   };
 
   return (
-    // Fixed Height (h-[100dvh]) prevents the scrollbar on mobile
     <div className="h-[100dvh] w-full bg-slate-950 flex items-center justify-center px-4 overflow-hidden font-sans text-white relative">
       
       {/* Background Ambience */}
@@ -174,14 +182,14 @@ export default function LoginPage() {
               animate={{ 
                 opacity: 1, 
                 scale: 1,
-                x: error ? [0, -10, 10, -10, 10, 0] : 0, // SHAKE EFFECT ON ERROR
+                x: error ? [0, -10, 10, -10, 10, 0] : 0, 
                 borderColor: error ? "rgba(239, 68, 68, 0.4)" : "rgba(255, 255, 255, 0.1)"
               }}
               exit={{ opacity: 0, scale: 0.9, filter: "blur(10px)" }}
               transition={{ duration: 0.3 }}
               className={`bg-slate-900/40 backdrop-blur-xl rounded-3xl shadow-2xl border p-8 w-full ${error ? 'border-red-500/40 shadow-red-500/10' : 'border-white/10'}`}
             >
-              <form onSubmit={handleLogin} className="space-y-6">
+              <form onSubmit={handleLogin} className="space-y-5">
                 
                 {/* Email Input */}
                 <div className="space-y-2">
@@ -203,7 +211,6 @@ export default function LoginPage() {
                         }
                       `}
                     />
-                    {/* Status Icon */}
                     <div className="absolute right-4 top-3.5 pointer-events-none">
                        {isEmailValid === true && <CheckCircle2 className="h-5 w-5 text-green-400 animate-in zoom-in" />}
                        {isEmailValid === false && isEmailTouched && <XCircle className="h-5 w-5 text-red-400 animate-in zoom-in" />}
@@ -267,20 +274,32 @@ export default function LoginPage() {
                   whileTap={{ scale: 0.98 }}
                   type="submit"
                   disabled={loading}
-                  className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:from-slate-800 disabled:text-slate-500 text-white font-bold py-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2"
+                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:from-slate-800 disabled:text-slate-500 text-white font-bold py-3.5 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2"
                 >
                   {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : "Sign In"}
                 </motion.button>
               </form>
 
-              <div className="mt-8 text-center">
-                <p className="text-sm text-slate-400">
-                  New to campus? <Link href="/signup" className="text-blue-400 hover:underline hover:text-blue-300 font-medium">Create Account</Link>
+              {/* --- NEW SIGN UP SECTION --- */}
+              <div className="mt-6 pt-6 border-t border-white/10">
+                <p className="text-sm text-slate-400 text-center mb-3">
+                  First time using GIKonnect?
                 </p>
+                <Link href="/signup">
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    className="w-full bg-white/5 hover:bg-white/10 border border-white/10 text-white font-semibold py-3.5 rounded-xl transition-all flex items-center justify-center gap-2 group"
+                  >
+                    <span>Activate Account</span>
+                    <ArrowRight className="h-4 w-4 text-slate-400 group-hover:text-white transition-colors" />
+                  </motion.button>
+                </Link>
               </div>
+
             </motion.div>
           ) : (
-            // --- SUCCESS ANIMATION VIEW ---
+            // Success Animation
             <motion.div 
                 key="success-view"
                 initial={{ opacity: 0, scale: 0.8 }}
@@ -303,13 +322,15 @@ export default function LoginPage() {
                 >
                     Access Granted
                 </motion.h2>
+                
+                {/* 👇 PERSONALIZED WELCOME MESSAGE */}
                 <motion.p 
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ delay: 0.4 }}
-                    className="text-green-200 text-sm"
+                    className="text-green-200 text-base"
                 >
-                    Welcome back.
+                    {userName ? `Welcome back, ${userName}.` : "Welcome back."}
                 </motion.p>
             </motion.div>
           )}

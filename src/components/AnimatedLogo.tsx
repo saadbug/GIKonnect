@@ -5,7 +5,7 @@ export default function AnimatedLogo({ size = "lg" }: { size?: "sm" | "md" | "lg
   const sizeClasses = {
     sm: "w-16 h-16",
     md: "w-32 h-32",
-    lg: "w-50 h-50", 
+    lg: "w-30 h-30", 
   };
 
   return (
