@@ -1,94 +1,79 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { useAuth } from "@/context/AuthContext";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { supabase } from "@/app/lib/supabase";
 import { getStudentName } from "@/app/lib/studentData"; 
 import { Loader2, CheckCircle2, ShieldCheck, ArrowRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
-export default function VerifyEmailPage() {
+function VerifyEmailContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const email = searchParams.get("email") || "";
+
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
   
-  // Identity State
   const [studentName, setStudentName] = useState("Student");
   const [batch, setBatch] = useState("");
-  
-  const router = useRouter();
-  const { user, loading: authLoading } = useAuth();
 
   useEffect(() => {
-    if (user?.email) {
-      const match = user.email.match(/^u(\d{7})@giki\.edu\.pk$/i);
+    async function fetchIdentity() {
+      if (!email) return;
+      
+      const match = email.match(/u?(\d+)@giki\.edu\.pk/i);
       if (match) {
         const regNo = match[1];
         
-        // 1. Get Name
-        const detectedName = getStudentName(regNo);
+        const detectedName = await getStudentName(regNo);
         if (detectedName) setStudentName(detectedName);
 
-        // 2. Get Batch
         const year = parseInt(regNo.substring(0, 4));
         if (!isNaN(year)) {
             setBatch(`Batch ${year - 1990}`);
         }
       }
     }
-  }, [user]);
+    
+    fetchIdentity();
+  }, [email]);
 
   const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError("");
 
-    if (!user) {
-        setError("Session lost. Please login again.");
+    if (!email) {
+        setError("No email found. Please go back and sign up again.");
         setLoading(false);
         return;
     }
 
     try {
-      const res = await fetch("/api/auth/verify-otp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-            uid: user.uid, 
-            code: code 
-        }),
+      const { data, error: verifyError } = await supabase.auth.verifyOtp({
+        email: email,
+        token: code,
+        type: 'signup' 
       });
 
-      const data = await res.json();
-
-      if (!res.ok) throw new Error(data.error || "Verification failed");
+      if (verifyError) throw verifyError;
 
       setSuccess(true); 
-
-      await user.reload();
-      await user.getIdToken(true);
 
       setTimeout(() => router.push("/onboarding"), 2000);
 
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || "Invalid verification code.");
       setLoading(false);
     } 
   };
 
-  if (authLoading) {
-    return (
-        <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-            <Loader2 className="animate-spin h-10 w-10 text-blue-500" />
-        </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 relative overflow-hidden font-sans">
       
-      {/* --- LIVE BACKGROUND --- */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-blue-900/20 via-slate-950 to-slate-950" />
         <motion.div 
@@ -111,7 +96,6 @@ export default function VerifyEmailPage() {
         )}
       </div>
 
-      {/* --- MAIN CARD --- */}
       <motion.div 
         initial={{ opacity: 0, scale: 0.9, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -121,7 +105,6 @@ export default function VerifyEmailPage() {
             <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
 
             <div className="text-center mb-8">
-                {/* Icon */}
                 <motion.div 
                     initial={{ scale: 0 }}
                     animate={{ scale: 1 }}
@@ -135,12 +118,10 @@ export default function VerifyEmailPage() {
                     )}
                 </motion.div>
                 
-                {/* --- 1. WELCOME NAME --- */}
                 <h1 className="text-2xl font-bold text-white tracking-tight mb-2">
                     {success ? "Identity Verified" : `Welcome, ${studentName}`}
                 </h1>
 
-                {/* --- 2. BATCH TAG --- */}
                 {!success && batch && (
                     <div className="flex justify-center mb-6">
                         <span className="bg-blue-500/10 text-blue-300 border border-blue-500/20 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider shadow-sm">
@@ -149,11 +130,10 @@ export default function VerifyEmailPage() {
                     </div>
                 )}
 
-                {/* --- 3. EMAIL INSTRUCTION --- */}
                 <p className="text-slate-400 text-sm leading-relaxed">
                     {success 
                         ? "Redirecting you to onboarding..." 
-                        : <>Enter code sent at <br/><span className="text-blue-400 font-mono font-semibold bg-blue-500/5 px-2 py-0.5 rounded">{user?.email}</span></>
+                        : <>Enter code sent at <br/><span className="text-blue-400 font-mono font-semibold bg-blue-500/5 px-2 py-0.5 rounded">{email}</span></>
                     }
                 </p>
             </div>
@@ -166,12 +146,13 @@ export default function VerifyEmailPage() {
                         value={code}
                         onChange={(e) => {
                             const val = e.target.value.replace(/[^0-9]/g, '');
-                            if (val.length <= 6) setCode(val);
-                            if (val.length === 6) setError("");
+                            // Updated to allow up to 8 digits!
+                            if (val.length <= 8) setCode(val);
+                            if (val.length >= 6) setError("");
                         }}
                         disabled={success || loading}
                         className={`
-                            relative w-full bg-slate-950 text-white text-center text-4xl font-mono tracking-[0.5em] py-5 rounded-xl border-2 outline-none transition-all duration-300
+                            relative w-full bg-slate-950 text-white text-center text-4xl font-mono tracking-[0.2em] py-5 rounded-xl border-2 outline-none transition-all duration-300
                             ${error 
                                 ? "border-red-500/50 focus:border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.2)]" 
                                 : success
@@ -179,10 +160,11 @@ export default function VerifyEmailPage() {
                                     : "border-slate-800 focus:border-blue-500/50 focus:shadow-[0_0_20px_rgba(59,130,246,0.2)]"
                             }
                         `}
-                        placeholder="000000"
+                        placeholder="00000000"
                     />
                     <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none opacity-20">
-                        {!code && <span className="text-4xl tracking-[0.5em]">______</span>}
+                        {/* Updated to show 8 placeholder dashes */}
+                        {!code && <span className="text-4xl tracking-[0.2em]">________</span>}
                     </div>
                 </div>
 
@@ -202,7 +184,8 @@ export default function VerifyEmailPage() {
                 <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
-                    disabled={loading || success || code.length !== 6}
+                    // Now safely unlocks as long as the code is at least 6 digits
+                    disabled={loading || success || code.length < 6}
                     className={`
                         w-full font-bold py-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 text-lg
                         ${success 
@@ -229,5 +212,17 @@ export default function VerifyEmailPage() {
         </div>
       </motion.div>
     </div>
+  );
+}
+
+export default function VerifyEmailPage() {
+  return (
+    <Suspense fallback={
+        <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+            <Loader2 className="animate-spin h-10 w-10 text-blue-500" />
+        </div>
+    }>
+        <VerifyEmailContent />
+    </Suspense>
   );
 }

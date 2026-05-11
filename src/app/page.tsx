@@ -1,28 +1,26 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { createPortal } from "react-dom"; // Import for Portal
+import { createPortal } from "react-dom";
 import { 
   ChevronLeft, ChevronRight, MapPin, Clock, Calendar as CalendarIcon, Sparkles, 
-  Pin, Plus, Trash2, Filter, X, Globe, Target, User, Mail, ShieldAlert, 
-  Loader2, Lock, ChevronDown 
+  Pin, Plus, Trash2, Filter, X, Globe, Target, User, ShieldAlert, 
+  Loader2, Lock 
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuthProtection } from "@/hooks/useAuthProtection";
 import { useAuth } from "@/context/AuthContext";
-import { collection, onSnapshot, Timestamp, query, orderBy, deleteDoc, doc } from "firebase/firestore";
-import { db } from "@/app/lib/firebase";
+import { supabase } from "@/app/lib/supabase";
 import Link from "next/link";
 import Image from "next/image";
 
-// --- Types ---
 type Event = {
   id: string;
   title: string;
   description?: string;
   date: Date;
   location?: string;
-  type: "Quiz" | "Holiday" | "Notice" | "Academic" | "Social" | "Mess" | "Sport" | "Mids" | "Finals" | "Assignment" | "Personal";
+  type: string;
   scope: "global" | "targeted" | "personal";
   targetFaculty?: string;
   targetBatch?: string;
@@ -40,7 +38,6 @@ const FACULTIES = [
 ];
 const BATCHES = ["Batch 32", "Batch 33", "Batch 34", "Batch 35"];
 
-// --- PORTAL COMPONENT (The Fix) ---
 const ModalPortal = ({ children }: { children: React.ReactNode }) => {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -52,6 +49,7 @@ export default function Home() {
   useAuthProtection();
   
   const { userProfile, user, loading: authLoading } = useAuth() as any;
+  const userId = user?.id || user?.uid; // Handles both Supabase and legacy objects
   
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
@@ -67,17 +65,12 @@ export default function Home() {
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
-  // --- Scroll Lock Logic ---
   useEffect(() => {
-    if (selectedEvent || deleteTarget) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = 'unset';
-    }
+    if (selectedEvent || deleteTarget) document.body.style.overflow = 'hidden';
+    else document.body.style.overflow = 'unset';
     return () => { document.body.style.overflow = 'unset'; };
   }, [selectedEvent, deleteTarget]);
 
-  // --- Calendar Logic ---
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -88,42 +81,41 @@ export default function Home() {
   const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1));
   const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1));
 
-  // --- Data Fetching ---
+  // --- Data Fetching (Supabase) ---
   useEffect(() => {
-    if (!userProfile || !user) return;
+    if (!userProfile || !userId) return;
 
-    const q = query(collection(db, "events"), orderBy("dateTime", "desc"));
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetchedEvents: Event[] = [];
-      
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        let eventDate = new Date();
-        if (data.dateTime) {
-             eventDate = data.dateTime instanceof Timestamp ? data.dateTime.toDate() : new Date(data.dateTime);
-        }
+    const fetchEvents = async () => {
+      const { data, error } = await supabase
+        .from('events')
+        .select('*')
+        .order('date_time', { ascending: false });
 
-        fetchedEvents.push({
-          id: doc.id,
-          title: data.title || "Untitled",
-          description: data.description || "",
-          date: eventDate,
-          location: data.location || "",
-          type: data.type || "Notice",
-          scope: data.scope || "global",
-          targetFaculty: data.targetFaculty,
-          targetBatch: data.targetBatch,
-          isPinned: data.isPinned || false,
-          authorName: data.authorName || "Unknown",
-          authorId: data.authorId,
-          authorEmail: data.authorEmail,
-          designation: data.designation || "Student",
-        });
-      });
+      if (error) {
+        console.error("Error fetching events:", error);
+        return;
+      }
 
+      const fetchedEvents: Event[] = data.map((d: any) => ({
+        id: d.id,
+        title: d.title || "Untitled",
+        description: d.description || "",
+        date: new Date(d.date_time), // Convert ISO string to Date
+        location: d.location || "",
+        type: d.type || "Notice",
+        scope: d.scope || "global",
+        targetFaculty: d.target_faculty,
+        targetBatch: d.target_batch,
+        isPinned: d.is_pinned || false,
+        authorName: d.author_name || "Unknown",
+        authorId: d.author_id,
+        authorEmail: d.author_email,
+        designation: d.designation || "Student",
+      }));
+
+      // RBAC Filtering Logic
       const filteredEvents = fetchedEvents.filter((event) => {
-        if (event.scope === 'personal') return event.authorId === user.uid;
+        if (event.scope === 'personal') return event.authorId === userId;
         if (event.scope === 'global') return true;
         if (event.scope === 'targeted') {
           if (userProfile.role === 'admin' && adminViewTarget) {
@@ -133,7 +125,7 @@ export default function Home() {
              const eventBatch = (event.targetBatch || "").toString().toLowerCase().replace("batch", "").trim();
              return filterFac === eventFac && filterBatch === eventBatch;
           }
-          const userFac = (userProfile.faculty || "").split(" - ")[0].trim().toLowerCase();
+          const userFac = (userProfile.faculty || "").split("-")[0].trim().toLowerCase();
           const userBatch = (userProfile.batch || "").toString().toLowerCase().replace("batch", "").trim();
           const eventFac = (event.targetFaculty || "").toLowerCase();
           const eventBatch = (event.targetBatch || "").toString().toLowerCase().replace("batch", "").trim();
@@ -150,25 +142,29 @@ export default function Home() {
 
       setEvents(filteredEvents);
       setDataLoading(false);
-    });
+    };
 
-    return () => unsubscribe();
-  }, [userProfile, user, adminViewTarget]);
+    fetchEvents();
 
-  // --- Helpers ---
+    // Setup Supabase Realtime Listener
+    const channel = supabase.channel('realtime_events')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'events' }, () => {
+        fetchEvents(); // Refetch when data changes
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [userProfile, userId, adminViewTarget]);
+
   const getEventsForDay = (day: number) => {
     return events.filter((e) => 
-      e.date.getDate() === day &&
-      e.date.getMonth() === month &&
-      e.date.getFullYear() === year
+      e.date.getDate() === day && e.date.getMonth() === month && e.date.getFullYear() === year
     );
   };
 
   const displayEvents = selectedDate
     ? events.filter((e) => 
-        e.date.getDate() === selectedDate.getDate() &&
-        e.date.getMonth() === selectedDate.getMonth() &&
-        e.date.getFullYear() === selectedDate.getFullYear()
+        e.date.getDate() === selectedDate.getDate() && e.date.getMonth() === selectedDate.getMonth() && e.date.getFullYear() === selectedDate.getFullYear()
       )
     : events.filter((e) => e.date >= new Date());
 
@@ -199,81 +195,59 @@ export default function Home() {
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     try {
-      await deleteDoc(doc(db, "events", deleteTarget));
+      const { error } = await supabase.from('events').delete().eq('id', deleteTarget);
+      if (error) throw error;
       setDeleteTarget(null);
       setSelectedEvent(null);
-    } catch (err) { alert("Failed to delete."); }
+    } catch (err: any) { 
+      alert(err.message || "Failed to delete."); 
+    }
   };
 
   if (authLoading || !userProfile) return <LiquidLoader />;
 
   return (
     <div className="min-h-screen bg-slate-950 relative overflow-hidden font-sans text-white pb-24">
-      
-      {/* Background */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none fixed">
         <motion.div className="absolute -top-[10%] -left-[10%] w-[500px] h-[500px] bg-blue-600/20 rounded-full blur-[120px]" animate={{ scale: [1, 1.1, 1] }} transition={{ duration: 10, repeat: Infinity }} />
         <motion.div className="absolute top-[20%] -right-[10%] w-[400px] h-[400px] bg-purple-500/10 rounded-full blur-[100px]" animate={{ scale: [1, 1.2, 1] }} transition={{ duration: 15, repeat: Infinity }} />
       </div>
 
       <main className="container mx-auto px-4 py-8 max-w-lg relative z-10">
-        
         {/* --- HEADER --- */}
-        <motion.header 
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex justify-between items-start mb-8"
-        >
-          {/* LEFT: Logo + Title */}
+        <motion.header initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="flex justify-between items-start mb-8">
           <div>
             <h1 className="text-3xl font-bold text-white tracking-tight drop-shadow-lg flex items-center gap-3">
               <div className="relative w-10 h-10">
-                <Image 
-                  src="/logo.png" 
-                  alt="GIKonnect Logo" 
-                  fill 
-                  className="object-contain drop-shadow-[0_0_15px_rgba(37,99,235,0.5)]" 
-                />
+                <Image src="/logo.png" alt="GIKonnect Logo" fill className="object-contain drop-shadow-[0_0_15px_rgba(37,99,235,0.5)]" />
               </div>
               GIKonnect <Sparkles className="h-5 w-5 text-yellow-400" />
             </h1>
             <p className="text-sm text-slate-400 ml-1">Your Campus, Synchronized.</p>
           </div>
           
-          {/* RIGHT: Actions */}
           <div className="flex gap-2 relative">
              {userProfile?.role === 'admin' && (
-                <button 
-                   onClick={() => setShowAdminFilter(!showAdminFilter)}
-                   className={`p-3 rounded-2xl border transition-all ${showAdminFilter || adminViewTarget ? "bg-purple-600 text-white border-purple-500 shadow-lg" : "bg-slate-900/50 text-slate-400 border-white/10 hover:text-white"}`}
-                >
+                <button onClick={() => setShowAdminFilter(!showAdminFilter)} className={`p-3 rounded-2xl border transition-all ${showAdminFilter || adminViewTarget ? "bg-purple-600 text-white border-purple-500 shadow-lg" : "bg-slate-900/50 text-slate-400 border-white/10 hover:text-white"}`}>
                    <Filter size={20} />
                 </button>
              )}
 
              <div className="relative">
-                <button 
-                    onClick={() => setShowAddMenu(!showAddMenu)}
-                    className="p-3 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white shadow-lg transition-all flex items-center gap-2"
-                >
+                <button onClick={() => setShowAddMenu(!showAddMenu)} className="p-3 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white shadow-lg transition-all flex items-center gap-2">
                     <Plus size={20} />
                     <span className="text-sm font-bold hidden sm:inline">Add</span>
                 </button>
 
                 <AnimatePresence>
                     {showAddMenu && (
-                        <motion.div 
-                            initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                            animate={{ opacity: 1, y: 0, scale: 1 }}
-                            exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                            className="absolute right-0 top-14 w-40 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden z-50"
-                        >
+                        <motion.div initial={{ opacity: 0, y: 10, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.95 }} className="absolute right-0 top-14 w-40 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden z-50">
                             <Link href="/personal-event" onClick={() => setShowAddMenu(false)}>
                                 <div className="px-4 py-3 hover:bg-slate-800 cursor-pointer border-b border-slate-800 text-sm flex items-center gap-2">
                                     <Lock size={14} className="text-indigo-400"/> Personal Event
                                 </div>
                             </Link>
-                            {(userProfile.role === 'admin' || userProfile.role === 'cr') && (
+                            {(userProfile.role === 'admin' || userProfile.role === 'cr' || userProfile.role === 'faculty') && (
                                 <Link href="/admin" onClick={() => setShowAddMenu(false)}>
                                     <div className="px-4 py-3 hover:bg-slate-800 cursor-pointer text-sm flex items-center gap-2 text-blue-300">
                                         <Globe size={14} /> Publish Event
@@ -290,29 +264,18 @@ export default function Home() {
         {/* --- ADMIN FILTER --- */}
         <AnimatePresence>
           {showAdminFilter && (
-            <motion.div 
-              initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}
-              className="overflow-hidden mb-6"
-            >
+            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden mb-6">
               <div className="bg-slate-900/80 backdrop-blur-xl border border-purple-500/30 p-4 rounded-2xl">
                  <div className="flex justify-between items-center mb-3">
                     <h3 className="text-sm font-bold text-purple-300 uppercase tracking-wider">Admin Spyglass</h3>
                     {adminViewTarget && <button onClick={() => setAdminViewTarget(null)} className="text-xs text-red-400"><X size={12}/> Clear</button>}
                  </div>
                  <div className="grid grid-cols-1 gap-3">
-                    <select 
-                      className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-sm text-white"
-                      onChange={(e) => setAdminViewTarget(prev => ({ batch: prev?.batch || BATCHES[0], faculty: e.target.value }))}
-                      value={adminViewTarget?.faculty || ""}
-                    >
+                    <select className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-sm text-white" onChange={(e) => setAdminViewTarget(prev => ({ batch: prev?.batch || BATCHES[0], faculty: e.target.value }))} value={adminViewTarget?.faculty || ""}>
                         <option value="">Select Faculty</option>
                         {FACULTIES.map(f => <option key={f} value={f}>{f}</option>)}
                     </select>
-                    <select 
-                      className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-sm text-white"
-                      onChange={(e) => setAdminViewTarget(prev => ({ faculty: prev?.faculty || FACULTIES[0], batch: e.target.value }))}
-                      value={adminViewTarget?.batch || ""}
-                    >
+                    <select className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-sm text-white" onChange={(e) => setAdminViewTarget(prev => ({ faculty: prev?.faculty || FACULTIES[0], batch: e.target.value }))} value={adminViewTarget?.batch || ""}>
                         <option value="">Select Batch</option>
                         {BATCHES.map(b => <option key={b} value={b}>{b}</option>)}
                     </select>
@@ -323,10 +286,7 @@ export default function Home() {
         </AnimatePresence>
 
         {/* --- CALENDAR --- */}
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
-          className="bg-slate-900/40 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/10 p-6 mb-8"
-        >
+        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-slate-900/40 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/10 p-6 mb-8">
           <div className="flex justify-between items-center mb-6">
             <button onClick={prevMonth} className="p-2 hover:bg-white/10 rounded-full transition text-slate-300"><ChevronLeft size={20} /></button>
             <h2 className="text-lg font-bold text-white tracking-wide">{monthNames[month]} <span className="text-blue-400">{year}</span></h2>
@@ -396,7 +356,6 @@ export default function Home() {
 
                     return (
                         <div key={event.id}>
-                            {/* Date Header for View All Mode */}
                             {showDateHeader && (index === 0 || displayEvents[index - 1].date.toDateString() !== event.date.toDateString()) && (
                                 <div className="mt-6 mb-2 pl-2 text-sm font-bold text-slate-500 flex items-center gap-2">
                                     <CalendarIcon size={14}/> 
@@ -483,16 +442,8 @@ export default function Home() {
       <ModalPortal>
         <AnimatePresence>
           {selectedEvent && (
-            <motion.div 
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
-              onClick={() => setSelectedEvent(null)}
-            >
-              <motion.div 
-                initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
-                className="bg-slate-900/95 w-full max-w-lg rounded-3xl border border-white/10 overflow-hidden shadow-2xl relative"
-                onClick={e => e.stopPropagation()}
-              >
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={() => setSelectedEvent(null)}>
+              <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }} className="bg-slate-900/95 w-full max-w-lg rounded-3xl border border-white/10 overflow-hidden shadow-2xl relative" onClick={e => e.stopPropagation()}>
                 <div className={`h-32 bg-gradient-to-br w-full relative ${selectedEvent.scope === 'global' ? 'from-blue-600/30 to-indigo-600/30' : 'from-orange-600/30 to-purple-600/30'}`}>
                    <button onClick={() => setSelectedEvent(null)} className="absolute top-4 right-4 bg-black/20 p-2 rounded-full hover:bg-black/40 text-white transition">
                       <X size={20} />
@@ -539,11 +490,8 @@ export default function Home() {
                           </div>
                       </div>
                       
-                      {(userProfile.role === 'admin' || selectedEvent.authorId === user.uid) && (
-                          <button 
-                              onClick={() => setDeleteTarget(selectedEvent.id)}
-                              className="p-2 bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20 transition"
-                          >
+                      {(userProfile.role === 'admin' || selectedEvent.authorId === userId) && (
+                          <button onClick={() => setDeleteTarget(selectedEvent.id)} className="p-2 bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20 transition">
                               <Trash2 size={18} />
                           </button>
                       )}
@@ -555,15 +503,12 @@ export default function Home() {
         </AnimatePresence>
       </ModalPortal>
 
-      {/* --- DELETE CONFIRMATION (PORTAL FIX) --- */}
+      {/* --- DELETE CONFIRMATION --- */}
       <ModalPortal>
         <AnimatePresence>
           {deleteTarget && (
             <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-               <motion.div 
-                 initial={{ scale: 0.9 }} animate={{ scale: 1 }}
-                 className="bg-slate-900 border border-red-500/30 p-6 rounded-2xl max-w-xs w-full shadow-[0_0_50px_rgba(239,68,68,0.2)]"
-               >
+               <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="bg-slate-900 border border-red-500/30 p-6 rounded-2xl max-w-xs w-full shadow-[0_0_50px_rgba(239,68,68,0.2)]">
                   <div className="flex flex-col items-center text-center gap-4">
                      <div className="h-12 w-12 bg-red-500/20 rounded-full flex items-center justify-center text-red-500">
                         <ShieldAlert size={24} />
@@ -582,7 +527,6 @@ export default function Home() {
           )}
         </AnimatePresence>
       </ModalPortal>
-
     </div>
   );
 }

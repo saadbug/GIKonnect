@@ -3,8 +3,7 @@
 import { useState } from "react";
 import PageLoader from "@/components/PageLoader";
 import { useRouter } from "next/navigation";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "../lib/firebase";
+import { supabase } from "@/app/lib/supabase";
 import { useAuthProtection } from "@/hooks/useAuthProtection";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -52,28 +51,35 @@ export default function PersonalEventPage() {
     setIsSubmitting(true);
 
     try {
+      const userId = user?.id;
+      
+      if (!userId || !userProfile) {
+         throw new Error("Authentication error. Please log in again.");
+      }
+
       if (!title || !dateTime || !eventType) {
         throw new Error("Please fill in the required fields (Title, Date, Type).");
       }
 
       const eventData = {
-        title,
-        description,
-        dateTime: new Date(dateTime),
-        location,
+        title: title,
+        description: description,
+        date_time: new Date(dateTime).toISOString(), // Convert to ISO for Postgres
+        location: location,
         type: eventType,
-        isPinned: false, // Personal events are not pinned globally
+        is_pinned: false, 
         scope: "personal", // <--- THE KEY FIELD
         
-        // Author Info (For deletion rights)
-        authorUid: user?.uid,
-        authorName: userProfile.fullName,
-        authorId: user?.uid, // Redundant but consistent with Home Page logic
-        
-        timestamp: serverTimestamp(),
+        // Author Info (For deletion rights via RLS)
+        author_id: userId,
+        author_name: userProfile.fullName,
+        author_email: userProfile.email,
+        designation: userProfile.designation || "Student"
       };
 
-      await addDoc(collection(db, "events"), eventData);
+      const { error } = await supabase.from('events').insert(eventData);
+      
+      if (error) throw error;
       
       setSuccessMessage("Added to your calendar!");
       
@@ -147,12 +153,12 @@ export default function PersonalEventPage() {
             {/* Success/Error Feedback */}
             <AnimatePresence>
               {successMessage && (
-                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} className="p-3 bg-green-500/10 border border-green-500/30 rounded-xl text-green-400 flex items-center gap-2">
+                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="p-3 bg-green-500/10 border border-green-500/30 rounded-xl text-green-400 flex items-center gap-2 mb-4 overflow-hidden">
                   <CheckCircle2 size={18} /> {successMessage}
                 </motion.div>
               )}
               {errorMessage && (
-                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 flex items-center gap-2">
+                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 flex items-center gap-2 mb-4 overflow-hidden">
                   <AlertCircle size={18} /> {errorMessage}
                 </motion.div>
               )}
@@ -246,7 +252,7 @@ export default function PersonalEventPage() {
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               disabled={isSubmitting}
-              className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-indigo-600/20 transition-all flex items-center justify-center gap-2 mt-4"
+              className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-indigo-600/20 transition-all flex items-center justify-center gap-2 mt-4 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isSubmitting ? (
                 <> <Loader2 className="animate-spin" /> Saving... </>

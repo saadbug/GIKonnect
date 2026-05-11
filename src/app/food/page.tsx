@@ -2,17 +2,22 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { VENUES, MENU_ITEMS, MESS_MENU, MenuItem, Venue, Review, MessComment } from "../lib/foodData";
-import { Star, X, Sparkles, Phone, Trash2, Send, ChevronRight, Heart, Users, Utensils, MapPin, Bookmark } from "lucide-react";
+import { Star, X, Sparkles, Phone, Trash2, Send, ChevronRight, Heart, Users, Utensils, MapPin, Bookmark, Loader2 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useAuthProtection } from "@/hooks/useAuthProtection";
-import { collection, addDoc, query, onSnapshot, serverTimestamp, deleteDoc, doc, orderBy, Timestamp } from "firebase/firestore";
-import { db } from "@/app/lib/firebase";
+import { supabase } from "@/app/lib/supabase";
+
+// --- TYPES FOR LOCAL STATE ---
+type Venue = { id: string; name: string; type: string; image: string; description: string; phoneNumber?: string; };
+type MenuItem = { id: string; venue_id: string; name: string; price: number; category: string; image: string; description?: string; variations?: any[]; };
+type Review = { id: string; itemId: string; userEmail: string; userName: string; userLabel?: string; rating: number; comment: string; timestamp: any; };
+type MessComment = { id: string; userEmail: string; userName: string; userLabel?: string; comment: string; timestamp: any; };
 
 // --- HELPER: RELATIVE TIME ---
 const formatRelativeTime = (timestamp: any) => {
   if (!timestamp) return "Just now";
-  const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+  // Handles both Supabase ISO strings and legacy Firebase timestamps
+  const date = typeof timestamp.toDate === 'function' ? timestamp.toDate() : new Date(timestamp);
   const now = new Date();
   const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
 
@@ -40,10 +45,18 @@ export default function FoodPage() {
   useAuthProtection();
   const { user, userProfile } = useAuth() as any;
   
+  // Database State
+  const [loading, setLoading] = useState(true);
+  const [venues, setVenues] = useState<Venue[]>([]);
+  const [allItems, setAllItems] = useState<MenuItem[]>([]);
+  const [messMenu, setMessMenu] = useState<Record<string, Record<string, string>>>({});
+  const [allReviews, setAllReviews] = useState<Review[]>([]);
+  const [messComments, setMessComments] = useState<MessComment[]>([]);
+
   // Navigation & Selection
   const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
-  const [selectedVariation, setSelectedVariation] = useState<any | null>(null); // For Pizzas/Sizes
+  const [selectedVariation, setSelectedVariation] = useState<any | null>(null);
   const [showGenie, setShowGenie] = useState(false);
   
   // Favorites
@@ -51,9 +64,6 @@ export default function FoodPage() {
   const [showSavedItems, setShowSavedItems] = useState(false);
   const [unfavoriteTarget, setUnfavoriteTarget] = useState<string | null>(null);
 
-  // Data
-  const [allReviews, setAllReviews] = useState<Review[]>([]);
-  const [messComments, setMessComments] = useState<MessComment[]>([]);
   const [activeCategory, setActiveCategory] = useState("All");
 
   // Genie State
@@ -65,48 +75,77 @@ export default function FoodPage() {
   const [newReviewComment, setNewReviewComment] = useState("");
   const [newMessComment, setNewMessComment] = useState("");
 
-  // --- INITIALIZATION ---
+  // --- INITIALIZATION (Fetch from Supabase) ---
   useEffect(() => {
     const savedFavs = localStorage.getItem("gikonnect_food_favs");
     if (savedFavs) setFavorites(JSON.parse(savedFavs));
 
-    const q = query(collection(db, "reviews"), orderBy("timestamp", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setAllReviews(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Review)));
-    });
-    return () => unsubscribe();
+    const loadData = async () => {
+      try {
+        // Fetch Venues
+        const { data: vData } = await supabase.from('venues').select('*');
+        if (vData) setVenues(vData.map(v => ({ id: v.id, name: v.name, type: v.type, image: v.image_url, description: v.description, phoneNumber: v.phone_number })));
+
+        // Fetch Items & Variations
+        const { data: iData } = await supabase.from('menu_items').select(`id, venue_id, name, base_price, category, image_url, description, item_variations(id, name, price)`);
+        if (iData) setAllItems(iData.map((item: any) => ({
+          id: item.id, venue_id: item.venue_id, name: item.name, price: item.base_price, category: item.category, image: item.image_url, description: item.description,
+          variations: item.item_variations?.length > 0 ? item.item_variations : undefined
+        })));
+
+        // Fetch Mess Menu
+        const { data: mData } = await supabase.from('mess_menu').select('*');
+        if (mData) {
+          const menuObj: any = { Monday: {}, Tuesday: {}, Wednesday: {}, Thursday: {}, Friday: {}, Saturday: {}, Sunday: {} };
+          mData.forEach(row => {
+            if (!menuObj[row.day_of_week]) menuObj[row.day_of_week] = {};
+            menuObj[row.day_of_week][row.meal_type] = row.meal_description;
+          });
+          setMessMenu(menuObj);
+        }
+
+        // Fetch Reviews
+        fetchReviews();
+      } catch (err) {
+        console.error("Error loading data:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
   }, []);
 
-  // --- MESS COMMENTS ---
+  // --- REVIEWS & COMMENTS DATA FETCHERS ---
+  const fetchReviews = async () => {
+    const { data } = await supabase.from('reviews').select('*').order('created_at', { ascending: false });
+    if (data) setAllReviews(data.map(r => ({ id: r.id, itemId: r.item_id, userEmail: r.user_email, userName: r.user_name, userLabel: r.user_label, rating: r.rating, comment: r.comment, timestamp: r.created_at })));
+  };
+
+  const fetchMessComments = async () => {
+    const { data } = await supabase.from('mess_comments').select('*').order('created_at', { ascending: false });
+    if (data) setMessComments(data.map(c => ({ id: c.id, userEmail: c.user_email, userName: c.user_name, userLabel: c.user_label, comment: c.comment, timestamp: c.created_at })));
+  };
+
+  // Trigger mess comments fetch when Mess is opened
   useEffect(() => {
-    if (selectedVenue?.type !== "Mess") return;
-    const q = query(collection(db, "mess_comments"), orderBy("timestamp", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setMessComments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MessComment)));
-    });
-    return () => unsubscribe();
+    if (selectedVenue?.type === "Mess") fetchMessComments();
   }, [selectedVenue]);
 
-  // Reset category when venue changes
   useEffect(() => {
     if (selectedVenue) setActiveCategory("All");
   }, [selectedVenue]);
 
-  // Set default variation when item opens
   useEffect(() => {
-    if (selectedItem && selectedItem.variations) {
-      setSelectedVariation(selectedItem.variations[0]);
-    } else {
-      setSelectedVariation(null);
-    }
+    if (selectedItem && selectedItem.variations) setSelectedVariation(selectedItem.variations[0]);
+    else setSelectedVariation(null);
   }, [selectedItem]);
 
   // --- ACTIONS ---
   const toggleFavorite = (itemId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (favorites.includes(itemId)) {
-      setUnfavoriteTarget(itemId);
-    } else {
+    if (favorites.includes(itemId)) setUnfavoriteTarget(itemId);
+    else {
       const newFavs = [...favorites, itemId];
       setFavorites(newFavs);
       localStorage.setItem("gikonnect_food_favs", JSON.stringify(newFavs));
@@ -122,42 +161,48 @@ export default function FoodPage() {
   };
 
   const submitReview = async () => {
-    if (!selectedItem || !newReviewComment.trim()) return;
+    if (!selectedItem || !newReviewComment.trim() || !user) return;
     try {
-      await addDoc(collection(db, "reviews"), {
-        itemId: selectedItem.id,
-        userEmail: user.email,
-        userName: userProfile?.fullName || "Anonymous",
-        userLabel: getBatchTag(userProfile),
+      await supabase.from('reviews').insert({
+        item_id: selectedItem.id,
+        user_email: user.email,
+        user_name: userProfile?.fullName || "Anonymous",
+        user_label: getBatchTag(userProfile),
         rating: newReviewRating,
-        comment: newReviewComment,
-        timestamp: serverTimestamp(),
+        comment: newReviewComment
       });
       setNewReviewComment("");
       setNewReviewRating(5);
+      fetchReviews(); // Re-sync
     } catch (e) { console.error(e); }
   };
 
   const deleteReview = async (reviewId: string) => {
-    if (confirm("Delete this review?")) await deleteDoc(doc(db, "reviews", reviewId));
+    if (confirm("Delete this review?")) {
+      await supabase.from('reviews').delete().eq('id', reviewId);
+      fetchReviews(); // Re-sync
+    }
   };
 
   const submitMessComment = async () => {
-    if (!newMessComment.trim()) return;
+    if (!newMessComment.trim() || !user) return;
     try {
-      await addDoc(collection(db, "mess_comments"), {
-        userEmail: user.email,
-        userName: userProfile?.fullName || "Student",
-        userLabel: getBatchTag(userProfile),
-        comment: newMessComment,
-        timestamp: serverTimestamp(),
+      await supabase.from('mess_comments').insert({
+        user_email: user.email,
+        user_name: userProfile?.fullName || "Student",
+        user_label: getBatchTag(userProfile),
+        comment: newMessComment
       });
       setNewMessComment("");
+      fetchMessComments(); // Re-sync
     } catch (e) { console.error(e); }
   };
 
   const deleteMessComment = async (id: string) => {
-    if (confirm("Delete this comment?")) await deleteDoc(doc(db, "mess_comments", id));
+    if (confirm("Delete this comment?")) {
+      await supabase.from('mess_comments').delete().eq('id', id);
+      fetchMessComments(); // Re-sync
+    }
   };
 
   // --- LOGIC HELPER ---
@@ -165,31 +210,24 @@ export default function FoodPage() {
     const reviews = allReviews.filter(r => r.itemId === itemId);
     if (reviews.length === 0) return { avg: "New", count: 0, num: 0 };
     const sum = reviews.reduce((acc, r) => acc + r.rating, 0);
-    return { 
-      avg: (sum / reviews.length).toFixed(1), 
-      count: reviews.length,
-      num: sum / reviews.length
-    };
+    return { avg: (sum / reviews.length).toFixed(1), count: reviews.length, num: sum / reviews.length };
   };
 
   const getFilteredItems = () => {
     if (!selectedVenue) return [];
-    let items = MENU_ITEMS[selectedVenue.id] || [];
-    if (activeCategory !== "All") {
-      items = items.filter(i => i.category === activeCategory);
-    }
+    let items = allItems.filter(i => i.venue_id === selectedVenue.id);
+    if (activeCategory !== "All") items = items.filter(i => i.category === activeCategory);
     return items;
   };
 
   const getVenueCategories = () => {
     if (!selectedVenue) return [];
-    const items = MENU_ITEMS[selectedVenue.id] || [];
+    const items = allItems.filter(i => i.venue_id === selectedVenue.id);
     const cats = Array.from(new Set(items.map(i => i.category)));
     return ["All", ...cats];
   };
 
   const getAllFavoriteItems = () => {
-    const allItems = Object.values(MENU_ITEMS).flat();
     return allItems.filter(item => favorites.includes(item.id));
   };
 
@@ -198,33 +236,19 @@ export default function FoodPage() {
     const results: MenuItem[] = [];
     const budgetPerPerson = geniePrefs.budget / geniePrefs.people;
 
-    // Smart Suggestion: Mess logic
     if (geniePrefs.category === "Desi" && budgetPerPerson < 250) {
-      // Mock a Mess Item
       results.push({ 
-        id: "mess_guest", 
-        name: "GIKI Mess (Guest Meal)", 
-        price: 200, 
-        category: "Desi", 
-        image: "mess_img",
-        description: "Best value for money on campus."
+        id: "mess_guest", venue_id: "mess", name: "GIKI Mess (Guest Meal)", price: 200, category: "Desi", image: "mess_img", description: "Best value for money on campus."
       });
     }
 
-    const allItems = Object.values(MENU_ITEMS).flat();
-    
     const filtered = allItems.filter(item => {
-      // Handle Variations Price Check
-      const minPrice = item.variations 
-        ? Math.min(...item.variations.map(v => v.price))
-        : item.price;
-      
+      const minPrice = item.variations ? Math.min(...item.variations.map(v => v.price)) : item.price;
       const fitsBudget = minPrice <= budgetPerPerson;
       const fitsCategory = geniePrefs.category === "Any" || item.category === geniePrefs.category;
       return fitsBudget && fitsCategory;
     });
 
-    // Sort by rating
     filtered.sort((a, b) => {
       const rateA = getItemRating(a.id).num || 0;
       const rateB = getItemRating(b.id).num || 0;
@@ -233,6 +257,15 @@ export default function FoodPage() {
 
     return [...results, ...filtered].slice(0, 3);
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white">
+        <Loader2 className="animate-spin text-orange-500 mb-4" size={48} />
+        <p className="text-slate-400 font-medium">Loading Database...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-white font-sans pb-24 relative overflow-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:none]">
@@ -306,9 +339,8 @@ export default function FoodPage() {
         {/* VENUE GRID */}
         {!selectedVenue && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {VENUES.map((venue) => {
-              // Calculate Venue Rating
-              const venueItems = MENU_ITEMS[venue.id] || [];
+            {venues.map((venue) => {
+              const venueItems = allItems.filter(i => i.venue_id === venue.id);
               const reviews = allReviews.filter(r => venueItems.some(i => i.id === r.itemId));
               const avg = reviews.length ? (reviews.reduce((a,b)=>a+b.rating,0)/reviews.length).toFixed(1) : "New";
 
@@ -375,7 +407,7 @@ export default function FoodPage() {
                      {/* --- MESS UI --- */}
                      {selectedVenue.type === "Mess" ? (
                         <div className="max-w-3xl mx-auto space-y-8">
-                           {Object.entries(MESS_MENU).map(([day, meals]) => {
+                           {Object.entries(messMenu).map(([day, meals]) => {
                               const isToday = new Date().toLocaleDateString('en-US', { weekday: 'long' }) === day;
                               return (
                                  <div key={day} className={`p-6 rounded-3xl border relative ${isToday ? 'bg-slate-900 border-orange-500/50 shadow-[0_0_30px_rgba(249,115,22,0.1)]' : 'bg-slate-900/40 border-white/5'}`}>
@@ -385,7 +417,7 @@ export default function FoodPage() {
                                        {Object.entries(meals).map(([type, meal]) => (
                                           <div key={type} className="bg-black/20 p-4 rounded-2xl border border-white/5">
                                              <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-2 block">{type}</span>
-                                             <span className="text-sm font-medium text-slate-200">{meal}</span>
+                                             <span className="text-sm font-medium text-slate-200">{meal as string}</span>
                                           </div>
                                        ))}
                                     </div>
@@ -410,7 +442,7 @@ export default function FoodPage() {
                                           </div>
                                           <div className="flex items-center gap-3">
                                              <span className="text-[10px] text-slate-500">{formatRelativeTime(c.timestamp)}</span>
-                                             {c.userEmail === user.email && <button onClick={() => deleteMessComment(c.id)} className="text-slate-600 hover:text-red-500"><Trash2 size={14}/></button>}
+                                             {c.userEmail === user?.email && <button onClick={() => deleteMessComment(c.id)} className="text-slate-600 hover:text-red-500"><Trash2 size={14}/></button>}
                                           </div>
                                        </div>
                                        <p className="text-slate-300 text-sm leading-relaxed">{c.comment}</p>
@@ -436,7 +468,6 @@ export default function FoodPage() {
                               {getFilteredItems().map(item => {
                                  const rating = getItemRating(item.id);
                                  const isFav = favorites.includes(item.id);
-                                 // Price Display Logic
                                  let priceDisplay = `Rs. ${item.price}`;
                                  if (item.variations) {
                                     const prices = item.variations.map(v => v.price);
@@ -531,11 +562,10 @@ export default function FoodPage() {
                               <button onClick={() => { 
                                  setShowGenie(false); 
                                  if (item.id === 'mess_guest') {
-                                    // Handle Mess Suggestion
-                                    const messVenue = VENUES.find(v => v.type === 'Mess');
+                                    const messVenue = venues.find(v => v.type === 'Mess');
                                     if(messVenue) setSelectedVenue(messVenue);
                                  } else {
-                                    const v = VENUES.find(v => MENU_ITEMS[v.id]?.some(i => i.id === item.id));
+                                    const v = venues.find(v => v.id === item.venue_id);
                                     if(v) setSelectedVenue(v);
                                     setSelectedItem(item);
                                  }
@@ -633,7 +663,7 @@ export default function FoodPage() {
                                          </div>
                                          <div className="flex items-center gap-3">
                                             <span className="text-[10px] text-slate-500">{formatRelativeTime(r.timestamp)}</span>
-                                            {r.userEmail === user.email && <button onClick={() => deleteReview(r.id)} className="text-slate-600 hover:text-red-500 transition"><Trash2 size={14}/></button>}
+                                            {r.userEmail === user?.email && <button onClick={() => deleteReview(r.id)} className="text-slate-600 hover:text-red-500 transition"><Trash2 size={14}/></button>}
                                          </div>
                                       </div>
                                       <div className="flex items-center gap-1 mb-2">

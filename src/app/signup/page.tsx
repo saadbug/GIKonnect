@@ -3,8 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { createUserWithEmailAndPassword } from "firebase/auth";
-import { auth } from "../lib/firebase";
+import { supabase } from "@/app/lib/supabase";
 import { Mail, Lock, Eye, EyeOff, AlertCircle, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
 import AnimatedLogo from "@/components/AnimatedLogo";
@@ -24,8 +23,10 @@ export default function SignUpPage() {
     setError("");
     setLoading(true);
 
-    // 1. Validate Input
-    if (!email.toLowerCase().endsWith("@giki.edu.pk")) {
+    const emailLower = email.toLowerCase().trim();
+
+    // 1. Validate Input Format
+    if (!emailLower.endsWith("@giki.edu.pk")) {
       setError("Please use your official GIKI email (@giki.edu.pk).");
       setLoading(false);
       return;
@@ -44,40 +45,67 @@ export default function SignUpPage() {
     }
 
     try {
-      // 2. Create User in Firebase
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
+      // 2. Extract Registration Number
+      const match = emailLower.match(/u?(\d+)@giki\.edu\.pk/i);
+      const regNo = match ? match[1] : null;
 
-      // 3. Trigger OTP Email
-      const res = await fetch("/api/auth/send-otp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          email: user.email, 
-          uid: user.uid 
-        }),
-      });
-
-      if (!res.ok) {
-        console.error("Failed to send OTP email immediately.");
+      if (!regNo) {
+        throw new Error("Invalid GIKI email format. Expected format: uXXXXXXX@giki.edu.pk");
       }
 
-      // 4. Redirect to OTP Entry Page
-      router.push("/verify-email");
+      // 3. Verify student exists in the university DB
+      const { data: student, error: dbError } = await supabase
+        .from('students')
+        .select('name')
+        .eq('reg_no', regNo)
+        .single();
+
+      if (dbError || !student) {
+        throw new Error("Registration number not found in the university database. Please contact admin.");
+      }
+
+      const studentName = student.name.replace(/\w\S*/g, (txt: string) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
+
+      // 4. Create User in Supabase
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: emailLower,
+        password: password,
+        options: {
+          data: {
+            name: studentName,
+            reg_no: regNo
+          }
+        }
+      });
+
+      if (authError) throw authError;
+
+      // --- NEW: HANDLE EXISTING ACCOUNTS ---
+      // Supabase returns an empty identities array if the user already exists
+      if (authData.user && authData.user.identities && authData.user.identities.length === 0) {
+        
+        // Check if they already have a completed profile
+        const { data: existingProfile } = await supabase.from('profiles').select('id').eq('email', emailLower).single();
+        
+        if (existingProfile) {
+          setError("Account already exists and is fully verified. Redirecting to login...");
+          setTimeout(() => router.push("/login"), 2500);
+          return;
+        } else {
+          setError("Account exists but is unverified. Redirecting to verification...");
+          setTimeout(() => router.push(`/verify-email?email=${encodeURIComponent(emailLower)}`), 2500);
+          return;
+        }
+      }
+
+      // 5. Fresh Signup Success! Redirect to OTP Entry
+      router.push(`/verify-email?email=${encodeURIComponent(emailLower)}`);
       
     } catch (error: any) {
       console.error("Sign up error:", error);
-      if (error.code === "auth/email-already-in-use") {
-        setError("This email is already registered. Please login instead.");
-      } else if (error.code === "auth/weak-password") {
-        setError("Password is too weak.");
-      } else if (error.code === "auth/invalid-email") {
-        setError("Invalid email address.");
-      } else {
-        setError("An error occurred. Please try again.");
-      }
+      setError(error.message || "An error occurred. Please try again.");
       setLoading(false);
-    }
+    } 
   };
 
   return (
@@ -99,30 +127,14 @@ export default function SignUpPage() {
 
       <div className="w-full max-w-md relative z-10">
         
-        {/* --- CENTERED HEADER SECTION --- */}
-        <motion.div 
-          initial={{ opacity: 0, y: -20 }} 
-          animate={{ opacity: 1, y: 0 }} 
-          className="flex flex-col items-center text-center mb-8"
-        >
-           {/* ANIMATED LOGO CONTAINER */}
+        <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col items-center text-center mb-8">
            <div className="mb-4">
              <AnimatedLogo size="lg" />
           </div>
-
-         
-          <p className="text-slate-400">
-            Join the campus network.
-          </p>
+          <p className="text-slate-400">Join the campus network.</p>
         </motion.div>
 
-        {/* --- MAIN CARD --- */}
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="bg-slate-900/40 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/10 p-8"
-        >
-          {/* --- SIGN UP FORM --- */}
+        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-slate-900/40 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/10 p-8">
           <form onSubmit={handleSignUp} className="space-y-5">
             
             {/* Email */}
@@ -198,13 +210,9 @@ export default function SignUpPage() {
               {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : "Create Account"}
             </motion.button>
 
-            {/* Links */}
             <div className="mt-6 text-center">
               <p className="text-sm text-slate-400">
                 Already have an account? <Link href="/login" className="text-blue-400 hover:underline font-semibold">Log In</Link>
-              </p>
-              <p className="text-xs text-slate-600 mt-4">
-                Only @giki.edu.pk email addresses allowed
               </p>
             </div>
           </form>

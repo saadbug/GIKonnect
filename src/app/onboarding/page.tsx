@@ -2,9 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
-import { auth, db } from "../lib/firebase";
-import { getStudentName } from "../lib/studentData"; // Import the data lookup
+import { supabase } from "@/app/lib/supabase";
+import { getStudentName } from "@/app/lib/studentData"; 
 import { 
   User, GraduationCap, Building2, ChevronRight, 
   Loader2, Lock, CheckCircle2, Sparkles, ShieldCheck, BadgeCheck, AlertCircle
@@ -36,6 +35,8 @@ export default function OnboardingPage() {
   const [error, setError] = useState("");
 
   // Form State
+  const [userUid, setUserUid] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string>("");
   const [fullName, setFullName] = useState("");
   const [regNumber, setRegNumber] = useState<number | null>(null);
   const [batch, setBatch] = useState<string | null>(null);
@@ -75,12 +76,17 @@ export default function OnboardingPage() {
     return null;
   };
 
-  // --- 2. INITIALIZATION & AUTO-FETCH ---
+  // --- 2. INITIALIZATION & AUTO-FETCH (Supabase) ---
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((user) => {
-      if (user && user.email) {
-        // Regex: Matches u2023623@giki.edu.pk
-        const studentMatch = user.email.match(/^u(\d{7})@giki\.edu\.pk$/i);
+    const initializeUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session?.user?.email) {
+        setUserUid(session.user.id);
+        setUserEmail(session.user.email);
+        
+        // Regex: Matches u2023623@giki.edu.pk or 2023623@giki.edu.pk
+        const studentMatch = session.user.email.match(/^u?(\d{7})@giki\.edu\.pk$/i);
 
         if (studentMatch) {
           // --- STUDENT LOGIC ---
@@ -99,16 +105,17 @@ export default function OnboardingPage() {
           setBatch(`Batch ${batchNum}`);
           setIsBatchLocked(true);
 
-          // 3. AUTO-FETCH NAME (New Feature)
-          const autoName = getStudentName(fullRegStr);
+          // 3. AUTO-FETCH NAME (FIX: Must await the database call!)
+          const autoName = await getStudentName(fullRegStr);
           if (autoName) {
             setFullName(autoName);
-            setIsNameLocked(true); // Lock it so they can't change it
+            setIsNameLocked(true); 
           }
 
         } else {
-          // --- ADMIN LOGIC ---
-          setRole("admin");
+          // --- FACULTY/ADMIN LOGIC ---
+          // Automatically assign faculty role if email doesn't start with 'u'
+          setRole("faculty");
           setBatch(null);
           setFaculty("Faculty/Admin");
         }
@@ -116,9 +123,9 @@ export default function OnboardingPage() {
       } else {
         router.push("/login");
       }
-    });
+    };
 
-    return () => unsubscribe();
+    initializeUser();
   }, [router]);
 
   // --- 3. RE-RUN SECTION DETECTION ON CHANGE ---
@@ -138,35 +145,37 @@ export default function OnboardingPage() {
     setSubmitting(true);
 
     try {
-      const user = auth.currentUser;
-      if (!user) return;
+      if (!userUid) throw new Error("No authenticated user found.");
 
+      // Calculate final faculty string
       let finalFaculty = faculty;
       if (role === "student" && section) {
         finalFaculty = `${faculty} - ${section}`;
       }
 
-      await setDoc(doc(db, "users", user.uid), {
-        fullName,
-        regNumber: role === "student" ? regNumber : null,
-        batch,
+      // Upsert data into the Postgres profiles table
+      const { error: dbError } = await supabase.from('profiles').upsert({
+        id: userUid,
+        email: userEmail,
+        full_name: fullName,
+        reg_no: role === "student" ? String(regNumber) : null,
+        batch: batch,
         faculty: finalFaculty,
-        section,
-        designation: role === "admin" ? designation : "Student",
-        email: user.email,
-        role,
-        createdAt: serverTimestamp(),
+        section: section,
+        designation: role === "faculty" ? designation : "Student",
+        role: role // 'student' or 'faculty' (Admin/CR can be manually elevated in DB)
       });
 
-      // --- THE FIX IS HERE ---
-      // Use window.location.href to FORCE a fresh fetch of the user profile
+      if (dbError) throw dbError;
+
+      // Force a hard reload to ensure all layout wrappers fetch the fresh profile
       setTimeout(() => {
           window.location.href = "/"; 
       }, 1000);
       
     } catch (error: any) {
       console.error(error);
-      setError("Failed to save profile.");
+      setError(error.message || "Failed to save profile.");
       setSubmitting(false);
     }
   };
@@ -178,6 +187,9 @@ export default function OnboardingPage() {
       </div>
     );
   }
+
+  // Safe split to avoid errors if fullName is empty during render
+  const firstName = (fullName || "").split(' ')[0] || (role === 'faculty' ? 'Faculty' : 'Student');
 
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 font-sans relative overflow-hidden">
@@ -203,17 +215,18 @@ export default function OnboardingPage() {
             >
               <Sparkles className="text-white h-8 w-8" />
             </motion.div>
+            
             {/* Dynamic Welcome Message */}
             <h1 className="text-3xl font-bold text-white mb-2">
-                Welcome, {fullName.split(' ')[0] || (role === 'admin' ? 'Admin' : 'Student')}!
+                Welcome, {firstName}!
             </h1>
             <p className="text-slate-400">Let's finish setting up your profile.</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
             
-            {/* --- ADMIN BADGE --- */}
-            {role === "admin" && (
+            {/* --- FACULTY BADGE --- */}
+            {role === "faculty" && (
               <div className="flex items-center gap-3 p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-300 text-sm mb-4">
                 <ShieldCheck className="h-5 w-5 flex-shrink-0" />
                 <span>Verified Staff/Faculty Account</span>
@@ -225,7 +238,6 @@ export default function OnboardingPage() {
               <label className="block text-sm font-medium text-slate-300 ml-1">Full Name</label>
               <div className="relative group">
                 <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                  {/* Icon turns green if locked/verified */}
                   <User className={`h-5 w-5 ${isNameLocked ? "text-green-400" : "text-slate-500"}`} />
                 </div>
                 <input
@@ -311,8 +323,8 @@ export default function OnboardingPage() {
               </div>
             )}
 
-            {/* --- ADMIN DESIGNATION SELECTION --- */}
-            {role === "admin" && (
+            {/* --- FACULTY DESIGNATION SELECTION --- */}
+            {role === "faculty" && (
               <div className="space-y-2">
                 <label className="block text-sm font-medium text-slate-300 ml-1">Designation</label>
                 <div className="relative group">

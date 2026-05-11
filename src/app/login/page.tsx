@@ -3,9 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { signInWithEmailAndPassword, signOut, sendPasswordResetEmail } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
-import { auth, db } from "../lib/firebase";
+import { supabase } from "@/app/lib/supabase"; // Swapped Firebase for Supabase
 import { 
   Mail, Lock, Eye, EyeOff, AlertCircle, Loader2, HelpCircle, 
   CheckCircle2, XCircle, Unlock, ArrowRight 
@@ -31,12 +29,12 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [loginSuccess, setLoginSuccess] = useState(false);
   
-  // 👇 NEW: Store the user's name for the animation
+  // Name state for the success animation
   const [userName, setUserName] = useState(""); 
 
-  // Clear stale sessions
+  // Clear stale sessions when loading the login page
   useEffect(() => {
-    signOut(auth);
+    supabase.auth.signOut();
   }, []);
 
   // --- REAL TIME EMAIL VALIDATION ---
@@ -68,52 +66,63 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
+      // 1. Supabase Authentication Call
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-      await user.reload();
-      const isVerified = auth.currentUser?.emailVerified;
-      const isAdmin = user.email === "admin@giki.edu.pk";
-
-      if (!isVerified && !isAdmin) {
-        await signOut(auth);
-        setError("Access Denied. Please verify your email first.");
-        setLoading(false);
-        return;
+      // 2. Catch Specific Errors (Like Unverified Emails)
+      if (signInError) {
+        if (signInError.message.includes("Email not confirmed")) {
+           setError("Account not verified. Redirecting to verification...");
+           
+           // If unverified, Supabase doesn't log them in. We route them to verify it.
+           setTimeout(() => {
+             router.push(`/verify-email?email=${encodeURIComponent(email)}`);
+           }, 2000);
+           return;
+        }
+        throw signInError; // Pass other errors down to the catch block
       }
 
-      // Check User Doc to get their Name
-      const userDoc = await getDoc(doc(db, "users", user.uid));
+      if (!data.user) throw new Error("Login failed");
+
+      // 3. Fetch User Profile from Postgres
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("full_name")
+        .eq("id", data.user.id)
+        .single();
       
-      // 👇 NEW: Extract name if profile exists
-      if (userDoc.exists()) {
-        const userData = userDoc.data();
-        // Get just the first name for a cleaner look
-        const firstName = userData.fullName ? userData.fullName.split(" ")[0] : "Student";
+      if (profile && profile.full_name) {
+        const firstName = profile.full_name.split(" ")[0];
         setUserName(firstName);
       } else {
-        setUserName(""); // No profile yet (will go to onboarding)
+        setUserName(""); 
       }
       
       setLoading(false); 
       setLoginSuccess(true); 
       
+      // 4. Redirect based on profile completion
       setTimeout(() => {
-        if (userDoc.exists()) {
+        if (profile) {
           router.push("/");
         } else {
           router.push("/onboarding");
         }
-      }, 2000); // Increased slightly to 2s so they can read the name
+      }, 2000); 
 
     } catch (error: any) {
       console.error("Login error:", error);
-      await signOut(auth);
+      await supabase.auth.signOut(); // Clean up partial broken sessions
       setLoading(false);
       
-      if (error.code === "auth/invalid-credential" || error.code === "auth/user-not-found" || error.code === "auth/wrong-password") {
+      // Map Supabase error codes to friendly UI messages
+      if (error.message.includes("Invalid login credentials")) {
         setError("Invalid email or password. Did you sign up first?");
-      } else if (error.code === "auth/too-many-requests") {
+      } else if (error.message.includes("rate limit")) {
         setError("Too many attempts. Try again later.");
       } else {
         setError("Login failed. Please try again.");
@@ -134,16 +143,17 @@ export default function LoginPage() {
     setError("");
     setSuccessMsg("");
 
-    const actionCodeSettings = {
-        url: 'https://gikonnect.vercel.app/setup-password', 
-        handleCodeInApp: true,
-    };
-
     try {
-      await sendPasswordResetEmail(auth, email, actionCodeSettings);
+      // Supabase Native Password Reset
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: 'https://gikonnect.vercel.app/setup-password', 
+      });
+
+      if (resetError) throw resetError;
+
       setSuccessMsg(`Reset link sent to ${email}. Check your Outlook!`);
     } catch (err: any) {
-      setError("Failed to send reset email. Try again.");
+      setError(err.message || "Failed to send reset email. Try again.");
     } finally {
       setLoading(false);
     }
@@ -152,7 +162,6 @@ export default function LoginPage() {
   return (
     <div className="h-[100dvh] w-full bg-slate-950 flex items-center justify-center px-4 overflow-hidden font-sans text-white relative">
       
-      {/* Background Ambience */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <motion.div className="absolute -top-[10%] -left-[10%] w-[500px] h-[500px] bg-blue-600/20 rounded-full blur-[120px]" animate={{ x: [0, 100, 0], y: [0, 50, 0], scale: [1, 1.1, 1] }} transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }} />
         <motion.div className="absolute top-[20%] -right-[10%] w-[400px] h-[400px] bg-cyan-500/10 rounded-full blur-[100px]" animate={{ x: [0, -100, 0], y: [0, -50, 0], scale: [1, 1.2, 1] }} transition={{ duration: 15, repeat: Infinity, ease: "easeInOut", delay: 1 }} />
@@ -160,12 +169,7 @@ export default function LoginPage() {
 
       <div className="w-full max-w-md relative z-10 flex flex-col items-center">
         
-        {/* HEADER SECTION */}
-        <motion.div 
-          initial={{ opacity: 0, y: -20 }} 
-          animate={{ opacity: 1, y: 0 }} 
-          className="flex flex-col items-center text-center mb-6"
-        >
+        <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col items-center text-center mb-6">
           <div className="mb-4">
              <AnimatedLogo size="lg" />
           </div>
@@ -173,7 +177,6 @@ export default function LoginPage() {
           <p className="text-slate-400">Your Campus, Synchronized.</p>
         </motion.div>
 
-        {/* --- MAIN CARD --- */}
         <AnimatePresence mode="wait">
           {!loginSuccess ? (
             <motion.div 
@@ -191,7 +194,6 @@ export default function LoginPage() {
             >
               <form onSubmit={handleLogin} className="space-y-5">
                 
-                {/* Email Input */}
                 <div className="space-y-2">
                   <label className="block text-sm font-medium text-slate-300 ml-1">GIKI Email</label>
                   <div className="relative group">
@@ -221,7 +223,6 @@ export default function LoginPage() {
                   )}
                 </div>
 
-                {/* Password Input */}
                 <div className="space-y-2">
                   <label className="block text-sm font-medium text-slate-300 ml-1">Password</label>
                   <div className="relative group">
@@ -253,7 +254,6 @@ export default function LoginPage() {
                   </div>
                 </div>
 
-                {/* Feedback Messages */}
                 {error && (
                   <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} className="flex items-center gap-3 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm">
                     <AlertCircle className="h-4 w-4 flex-shrink-0" />
@@ -268,7 +268,6 @@ export default function LoginPage() {
                   </motion.div>
                 )}
 
-                {/* Login Button */}
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
@@ -280,7 +279,6 @@ export default function LoginPage() {
                 </motion.button>
               </form>
 
-              {/* --- NEW SIGN UP SECTION --- */}
               <div className="mt-6 pt-6 border-t border-white/10">
                 <p className="text-sm text-slate-400 text-center mb-3">
                   First time using GIKonnect?
@@ -299,7 +297,6 @@ export default function LoginPage() {
 
             </motion.div>
           ) : (
-            // Success Animation
             <motion.div 
                 key="success-view"
                 initial={{ opacity: 0, scale: 0.8 }}
@@ -323,7 +320,6 @@ export default function LoginPage() {
                     Access Granted
                 </motion.h2>
                 
-                {/* 👇 PERSONALIZED WELCOME MESSAGE */}
                 <motion.p 
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}

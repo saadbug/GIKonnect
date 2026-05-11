@@ -1,15 +1,14 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { onAuthStateChanged, User } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
-import { auth, db } from "../app/lib/firebase";
+import { User } from "@supabase/supabase-js"; // Import Supabase User type
+import { supabase } from "@/app/lib/supabase"; // Import your Supabase client
 
-// User Profile Interface
+// User Profile Interface (Updated with 'faculty' role)
 export interface UserProfile {
   fullName: string;
   email: string;
-  role: "admin" | "cr" | "student";
+  role: "admin" | "cr" | "student" | "faculty"; 
   faculty: string;
   batch: string | null;
   designation: string;
@@ -36,55 +35,70 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        // Force token refresh to ensure emailVerified is up-to-date
-        try {
-          await firebaseUser.getIdTokenResult(true);
-          await firebaseUser.reload();
-        } catch (error) {
-          console.error("Error refreshing token:", error);
-        }
-      }
+    let mounted = true;
 
-      setUser(firebaseUser);
-
-      if (firebaseUser) {
-        // Fetch user profile from Firestore
-        try {
-          const userDocRef = doc(db, "users", firebaseUser.uid);
-          const userDocSnap = await getDoc(userDocRef);
-
-          if (userDocSnap.exists()) {
-            const data = userDocSnap.data();
-            // Ensure email is included (merge from User if not in Firestore)
-            // Type-safe mapping with defaults
-            const userProfile: UserProfile = {
-              fullName: data.fullName || "",
-              email: data.email || firebaseUser.email || "",
-              role: (data.role === "admin" || data.role === "cr" || data.role === "student")
-                ? data.role
-                : "student",
-              faculty: data.faculty || "",
-              batch: data.batch || null,
-              designation: data.designation || "",
-            };
-            setUserProfile(userProfile);
-          } else {
-            setUserProfile(null);
-          }
-        } catch (error) {
-          console.error("Error fetching user profile:", error);
+    // Helper function to fetch the profile from Postgres
+    const fetchProfile = async (sessionUser: User | null) => {
+      if (!sessionUser) {
+        if (mounted) {
+          setUser(null);
           setUserProfile(null);
+          setLoading(false);
         }
-      } else {
-        setUserProfile(null);
+        return;
       }
 
-      setLoading(false);
+      if (mounted) setUser(sessionUser);
+
+      try {
+        // Query the new Postgres 'profiles' table
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", sessionUser.id)
+          .single();
+
+        if (data && mounted) {
+          const profile: UserProfile = {
+            fullName: data.full_name || "", // Map snake_case to camelCase
+            email: data.email || sessionUser.email || "",
+            role: (data.role === "admin" || data.role === "cr" || data.role === "faculty" || data.role === "student")
+              ? data.role
+              : "student",
+            faculty: data.faculty || "",
+            batch: data.batch || null,
+            designation: data.designation || "",
+          };
+          setUserProfile(profile);
+        } else {
+          if (mounted) setUserProfile(null);
+        }
+      } catch (error) {
+        console.error("Error fetching user profile:", error);
+        if (mounted) setUserProfile(null);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    // 1. Initial Session Check (Runs immediately on mount)
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      fetchProfile(session?.user || null);
     });
 
-    return () => unsubscribe();
+    // 2. Set up the Supabase Realtime Auth Listener
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        // This fires on login, logout, and when the token refreshes natively
+        fetchProfile(session?.user || null);
+      }
+    );
+
+    // Cleanup listener on unmount
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   return (
@@ -101,4 +115,3 @@ export function useAuth(): AuthContextType {
   }
   return context;
 }
-
