@@ -1,32 +1,119 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { signOut } from "firebase/auth";
-import { auth } from "../lib/firebase";
+import { supabase } from "@/app/lib/supabase"; // Supabase instead of Firebase
 import { useAuth } from "../../context/AuthContext";
 import { useAuthProtection } from "../../hooks/useAuthProtection";
 import { 
   Mail, GraduationCap, Building2, 
   BadgeCheck, LogOut, Loader2, Edit3, 
-  Shield, Zap, BookUser, Briefcase
+  Shield, Zap, BookUser, Briefcase, AlertCircle, X, CheckCircle2
 } from "lucide-react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
+import { createPortal } from "react-dom";
+
+const FACULTY_OPTIONS = [
+  "Artificial Intelligence", "Computer Engineering", "Computer Science",
+  "Cyber Security", "Chemical Engineering", "Civil Engineering",
+  "Data Science", "Electrical Engineering", "Basic Sciences",
+  "Management Sciences", "Material Engineering", "Mechanical Engineering",
+  "Software Engineering",
+];
+
+// Portal for the Edit Modal
+const ModalPortal = ({ children }: { children: React.ReactNode }) => {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+  return createPortal(children, document.body);
+};
 
 export default function ProfilePage() {
   useAuthProtection();
   const { userProfile, user } = useAuth() as any;
   const router = useRouter();
+  
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  
+  // Edit Profile State
+  const [isEditing, setIsEditing] = useState(false);
+  const [newFaculty, setNewFaculty] = useState("");
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [editSuccess, setEditSuccess] = useState("");
+
+  // Lock scrolling when modal is open
+  useEffect(() => {
+    if (isEditing) document.body.style.overflow = 'hidden';
+    else document.body.style.overflow = 'unset';
+    return () => { document.body.style.overflow = 'unset'; };
+  }, [isEditing]);
 
   const handleLogout = async () => {
     setIsLoggingOut(true);
     try {
-      await signOut(auth);
+      await supabase.auth.signOut();
       router.push("/login");
     } catch (error) {
       console.error("Error signing out:", error);
       setIsLoggingOut(false);
+    }
+  };
+
+  const handleUpdateFaculty = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setEditError("");
+    setEditSuccess("");
+    setIsUpdating(true);
+
+    try {
+      if (!newFaculty) throw new Error("Please select a faculty.");
+      const userId = user?.id;
+
+      // 1. Fetch the exact cooldown timestamp from the database
+      const { data: profileData, error: fetchError } = await supabase
+        .from('profiles')
+        .select('faculty_last_updated')
+        .eq('id', userId)
+        .single();
+
+      if (fetchError) throw fetchError;
+
+      // 2. Enforce the 24-hour rule
+      if (profileData.faculty_last_updated) {
+        const lastUpdated = new Date(profileData.faculty_last_updated);
+        const now = new Date();
+        const diffInHours = (now.getTime() - lastUpdated.getTime()) / (1000 * 60 * 60);
+
+        if (diffInHours < 24) {
+          const hoursLeft = Math.ceil(24 - diffInHours);
+          throw new Error(`You can only change your department once every 24 hours. Try again in ${hoursLeft} hours.`);
+        }
+      }
+
+      // 3. Update the profile
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ 
+          faculty: newFaculty,
+          faculty_last_updated: new Date().toISOString() 
+        })
+        .eq('id', userId);
+
+      if (updateError) throw updateError;
+
+      setEditSuccess("Profile updated successfully!");
+      
+      // Force reload to update context
+      setTimeout(() => {
+        window.location.reload();
+      }, 1500);
+
+    } catch (err: any) {
+      setEditError(err.message || "Failed to update profile.");
+    } finally {
+      setIsUpdating(false);
     }
   };
 
@@ -67,6 +154,12 @@ export default function ProfilePage() {
       icon: <Zap size={14} className="text-orange-200" />,
       color: "bg-orange-500/20 border-orange-500/30 text-orange-300",
       avatarRing: "border-orange-500"
+    },
+    faculty: {
+      label: "Faculty",
+      icon: <Briefcase size={14} className="text-emerald-200" />,
+      color: "bg-emerald-500/20 border-emerald-500/30 text-emerald-300",
+      avatarRing: "border-emerald-500"
     },
     student: {
       label: "Student",
@@ -127,45 +220,39 @@ export default function ProfilePage() {
           <div className="rounded-3xl overflow-hidden border border-white/10 relative backdrop-blur-xl bg-slate-900/40 shadow-2xl">
             
             {/* Card Banner */}
-            <div className={`h-32 relative bg-gradient-to-r ${role === 'admin' ? 'from-purple-900 to-indigo-900' : 'from-blue-800 to-slate-900'}`}>
+            <div className={`h-32 relative bg-gradient-to-r ${role === 'admin' ? 'from-purple-900 to-indigo-900' : role === 'faculty' ? 'from-emerald-900 to-teal-900' : 'from-blue-800 to-slate-900'}`}>
                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-20 mix-blend-overlay"></div>
             </div>
 
             {/* Avatar & Content */}
             <div className="px-6 pb-8 -mt-16 flex flex-col items-center text-center">
               
-              {/* Avatar Image */}
               <div className="relative">
                 <div className={`h-28 w-28 rounded-2xl bg-slate-900 p-1.5 shadow-2xl border-4 ${currentRole.avatarRing}`}>
                   <div className="h-full w-full bg-gradient-to-br from-slate-800 to-slate-900 rounded-xl flex items-center justify-center text-3xl font-bold text-slate-500">
                     {getInitials(userProfile.fullName)}
                   </div>
                 </div>
-                {/* Verified Badge */}
                 <div className="absolute -bottom-2 -right-2 bg-blue-500 text-white p-1.5 rounded-full border-4 border-slate-900 shadow-lg">
                   <BadgeCheck size={18} fill="currentColor" className="text-white" />
                 </div>
               </div>
 
-              {/* Name & Designation */}
               <div className="mt-5 mb-6 w-full">
                 <h2 className="text-2xl font-bold text-white">
                   {userProfile.fullName || "User Name"}
                 </h2>
                 <div className="flex items-center justify-center gap-2 mt-2 flex-wrap">
-                    {/* 1. Designation Badge */}
                     <span className="text-xs font-bold text-slate-400 uppercase tracking-wider bg-slate-800/50 px-3 py-1 rounded-full border border-slate-700/50">
                         {userProfile.designation || "Student"}
                     </span>
                     
-                    {/* 2. Role Power Level Badge */}
                     <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border backdrop-blur-md ${currentRole.color}`}>
                         {currentRole.icon}
                         <span className="text-xs font-bold uppercase tracking-wider">{currentRole.label}</span>
                     </div>
                 </div>
 
-                {/* 3. Batch Badge (Students Only) */}
                 {isStudentOrCR && userProfile.batch && (
                     <div className="mt-2">
                         <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-500/10 border border-blue-500/20 rounded-full text-blue-300 text-xs font-bold uppercase tracking-wider">
@@ -175,7 +262,6 @@ export default function ProfilePage() {
                 )}
               </div>
 
-              {/* Info Grid */}
               <div className="grid grid-cols-1 w-full gap-3">
                  <DetailRow 
                    icon={<Building2 className="h-4 w-4 text-cyan-400" />} 
@@ -207,20 +293,24 @@ export default function ProfilePage() {
           transition={{ delay: 0.2 }}
           className="space-y-3"
         >
-          {/* Edit Button */}
-          <button className="w-full bg-slate-900/60 p-4 rounded-2xl border border-white/5 flex items-center justify-between group hover:bg-slate-800/60 hover:border-blue-500/30 transition-all backdrop-blur-md">
+          <button 
+            onClick={() => {
+                setNewFaculty(userProfile.faculty?.split(" - ")[0] || "");
+                setIsEditing(true);
+            }}
+            className="w-full bg-slate-900/60 p-4 rounded-2xl border border-white/5 flex items-center justify-between group hover:bg-slate-800/60 hover:border-blue-500/30 transition-all backdrop-blur-md"
+          >
             <div className="flex items-center gap-4">
               <div className="h-10 w-10 rounded-full bg-slate-800 flex items-center justify-center text-slate-400 group-hover:text-blue-400 transition-colors">
                 <Edit3 size={18} />
               </div>
               <div className="text-left">
                 <p className="text-sm font-semibold text-white">Edit Profile</p>
-                <p className="text-xs text-slate-500">Update details</p>
+                <p className="text-xs text-slate-500">Update department</p>
               </div>
             </div>
           </button>
 
-          {/* Logout Button */}
           <button
             onClick={handleLogout}
             disabled={isLoggingOut}
@@ -239,13 +329,78 @@ export default function ProfilePage() {
             </div>
           </button>
         </motion.div>
-
       </main>
+
+      {/* --- EDIT PROFILE MODAL --- */}
+      <ModalPortal>
+        <AnimatePresence>
+          {isEditing && (
+            <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={() => !isUpdating && setIsEditing(false)}>
+               <motion.div 
+                 initial={{ scale: 0.9, opacity: 0 }} 
+                 animate={{ scale: 1, opacity: 1 }} 
+                 exit={{ scale: 0.9, opacity: 0 }}
+                 className="bg-slate-900 border border-slate-700/50 p-6 rounded-3xl max-w-sm w-full shadow-2xl relative"
+                 onClick={e => e.stopPropagation()}
+               >
+                 <button onClick={() => !isUpdating && setIsEditing(false)} className="absolute top-4 right-4 text-slate-500 hover:text-white transition">
+                    <X size={20} />
+                 </button>
+                 
+                 <div className="mb-6">
+                    <h3 className="text-xl font-bold text-white mb-2">Edit Department</h3>
+                    <div className="flex gap-2 p-3 bg-orange-500/10 border border-orange-500/30 rounded-xl text-orange-300 text-xs leading-relaxed">
+                        <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                        <p><strong>Warning:</strong> You can only change your department once every 24 hours. Your section will be automatically recalculated.</p>
+                    </div>
+                 </div>
+
+                 <form onSubmit={handleUpdateFaculty} className="space-y-4">
+                    
+                    <div className="space-y-2">
+                        <label className="block text-sm font-medium text-slate-300 ml-1">New Faculty/Department</label>
+                        <select 
+                            value={newFaculty}
+                            onChange={(e) => setNewFaculty(e.target.value)}
+                            disabled={isUpdating}
+                            className="block w-full px-4 py-3.5 bg-slate-950/50 border border-slate-700/50 rounded-xl text-white appearance-none focus:ring-2 focus:ring-blue-500/50 outline-none transition-all disabled:opacity-50"
+                        >
+                            <option value="">Select Faculty...</option>
+                            {FACULTY_OPTIONS.map(f => <option key={f} value={f}>{f}</option>)}
+                        </select>
+                    </div>
+
+                    <AnimatePresence>
+                        {editError && (
+                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="text-red-400 text-xs p-2 bg-red-500/10 border border-red-500/20 rounded-lg">
+                                {editError}
+                            </motion.div>
+                        )}
+                        {editSuccess && (
+                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="text-green-400 text-xs p-2 bg-green-500/10 border border-green-500/20 rounded-lg flex items-center gap-1">
+                                <CheckCircle2 size={14} /> {editSuccess}
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+
+                    <button 
+                        type="submit" 
+                        disabled={isUpdating || newFaculty === (userProfile.faculty?.split(" - ")[0])}
+                        className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 text-white font-bold rounded-xl transition-all flex justify-center items-center gap-2 mt-2"
+                    >
+                        {isUpdating ? <Loader2 size={18} className="animate-spin" /> : "Save Changes"}
+                    </button>
+                 </form>
+               </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+      </ModalPortal>
+
     </div>
   );
 }
 
-// Detail Row Component
 function DetailRow({ icon, label, value }: any) {
   return (
     <div className="flex items-center justify-between p-4 bg-slate-800/40 rounded-xl border border-white/5 backdrop-blur-sm hover:bg-slate-800/60 transition-colors">

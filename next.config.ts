@@ -5,7 +5,7 @@ const nextConfig: NextConfig = {
   reactCompiler: true, // Keep your existing setting
   
   // 1. Tells Next.js to produce a static 'out' folder instead of a server
-  output: 'export',
+  //output: 'export',
 
  
   images: {

@@ -1,11 +1,11 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import PageLoader from "@/components/PageLoader";
 import { useAuth } from "@/context/AuthContext";
 import { useAuthProtection } from "@/hooks/useAuthProtection";
-import { doc, getDoc, setDoc, serverTimestamp, collection, query, where, orderBy, onSnapshot, addDoc, deleteDoc } from "firebase/firestore";
-import { db } from "@/app/lib/firebase";
+import { supabase } from "@/app/lib/supabase";
 import { 
   Clock, MapPin, Edit3, Save, Plus, Trash2, Calendar, BookOpen, 
   AlertCircle, Loader2, LayoutGrid, List, FileText, X, Coffee, CheckCircle2, AlertTriangle
@@ -23,7 +23,7 @@ type ClassSession = {
   room: string;
   teacher?: string;
   type: SessionType;
-  duration: number; // Slots occupied
+  duration: number; 
 };
 
 type WeeklySchedule = {
@@ -38,48 +38,44 @@ type Assessment = {
   id: string;
   title: string;
   type: "Quiz" | "Assignment";
-  date: any;
+  date: Date;
   location?: string;
 };
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 
-// --- MASTER TIME CONFIGURATION (9 Slots) ---
+// --- MASTER TIME CONFIGURATION ---
 const SLOTS_STD = [
-  { start: "08:00", end: "08:50" }, // 0
-  { start: "09:00", end: "09:50" }, // 1
-  { start: "10:30", end: "11:20" }, // 2
-  { start: "11:30", end: "12:20" }, // 3
-  { start: "12:30", end: "13:20" }, // 4
-  // BREAK HAPPENS HERE (Between 4 and 5)
-  { start: "14:30", end: "15:20" }, // 5
-  { start: "15:30", end: "16:20" }, // 6
-  { start: "16:30", end: "17:20" }, // 7
-  { start: "17:30", end: "18:20" }, // 8
+  { start: "08:00", end: "08:50" }, { start: "09:00", end: "09:50" },
+  { start: "10:30", end: "11:20" }, { start: "11:30", end: "12:20" },
+  { start: "12:30", end: "13:20" }, { start: "14:30", end: "15:20" },
+  { start: "15:30", end: "16:20" }, { start: "16:30", end: "17:20" },
+  { start: "17:30", end: "18:20" },
 ];
 
 const SLOTS_FRI = [
-  { start: "08:00", end: "08:50" }, // 0
-  { start: "09:00", end: "09:50" }, // 1
-  { start: "10:00", end: "10:50" }, // 2
-  { start: "11:00", end: "11:50" }, // 3
-  { start: "12:00", end: "12:50" }, // 4
-  // BREAK HAPPENS HERE
-  { start: "14:30", end: "15:20" }, // 5
-  { start: "15:30", end: "16:20" }, // 6
-  { start: "16:30", end: "17:20" }, // 7
-  { start: "17:30", end: "18:20" }, // 8
+  { start: "08:00", end: "08:50" }, { start: "09:00", end: "09:50" },
+  { start: "10:00", end: "10:50" }, { start: "11:00", end: "11:50" },
+  { start: "12:00", end: "12:50" }, { start: "14:30", end: "15:20" },
+  { start: "15:30", end: "16:20" }, { start: "16:30", end: "17:20" },
+  { start: "17:30", end: "18:20" },
 ];
 
-// Used for Grid Iteration
 const GRID_ROWS = Array.from({ length: 9 });
 
 const INITIAL_SCHEDULE: WeeklySchedule = {
   Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: []
 };
 
-// --- HELPERS ---
+// --- PORTAL COMPONENT (Fixes Centering Bug) ---
+const ModalPortal = ({ children }: { children: React.ReactNode }) => {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+  return createPortal(children, document.body);
+};
 
+// --- HELPERS ---
 const getTimeMinutes = (time: string) => {
   const [h, m] = time.split(":").map(Number);
   return h * 60 + m;
@@ -88,7 +84,6 @@ const getTimeMinutes = (time: string) => {
 const getSessionStatus = (start: string, end: string, day: string, nextUpcomingStart: string | null) => {
   const now = new Date();
   const currentDay = now.toLocaleDateString("en-US", { weekday: "long" });
-  
   if (day !== currentDay) return "idle";
 
   const currentMins = now.getHours() * 60 + now.getMinutes();
@@ -98,7 +93,6 @@ const getSessionStatus = (start: string, end: string, day: string, nextUpcomingS
   if (currentMins >= endMins) return "finished";
   if (currentMins >= startMins && currentMins < endMins) return "ongoing";
   if (start === nextUpcomingStart) return "upcoming"; 
-  
   return "idle";
 };
 
@@ -117,13 +111,13 @@ const getBreakStatus = (day: string) => {
   if (day !== currentDay) return false;
   
   const mins = now.getHours() * 60 + now.getMinutes();
-  if (day === "Friday") return mins >= 770 && mins < 870; // Juma (12:50 - 14:30)
-  return mins >= 800 && mins < 870; // Lunch (13:20 - 14:30)
+  if (day === "Friday") return mins >= 770 && mins < 870; 
+  return mins >= 800 && mins < 870; 
 };
 
 export default function TimetablePage() {
   useAuthProtection();
-  const { userProfile } = useAuth() as any;
+  const { userProfile, user } = useAuth() as any;
 
   // State
   const [schedule, setSchedule] = useState<WeeklySchedule>(INITIAL_SCHEDULE);
@@ -147,48 +141,69 @@ export default function TimetablePage() {
   const [newAssessment, setNewAssessment] = useState({ title: "", date: "", location: "" });
 
   const isCR = userProfile?.role === "cr" || userProfile?.role === "admin";
-  const docId = userProfile ? `${userProfile.faculty}_${userProfile.batch}` : null;
 
-  // --- Initial Load ---
+  // --- Initial Load (Supabase) ---
   useEffect(() => {
     const currentDay = new Date().toLocaleDateString("en-US", { weekday: "long" });
     setToday(currentDay);
     if (DAYS.includes(currentDay)) setActiveDay(currentDay);
 
-    if (!docId) return;
+    if (!userProfile) return;
 
     const fetchTimetable = async () => {
       try {
-        const docRef = doc(db, "timetables", docId);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setSchedule(docSnap.data().schedule as WeeklySchedule);
+        const { data, error } = await supabase
+          .from('timetables')
+          .select('schedule')
+          .eq('faculty', userProfile.faculty)
+          .eq('batch', userProfile.batch)
+          .single();
+
+        if (data && data.schedule) {
+          setSchedule(data.schedule as WeeklySchedule);
         }
-      } catch (error) { console.error(error); } finally { setLoading(false); }
+      } catch (error) { 
+        console.error(error); 
+      } finally { 
+        setLoading(false); 
+      }
     };
 
-    const q = query(collection(db, "events"), where("scope", "in", ["global", "targeted"]), orderBy("dateTime", "asc"));
-    const unsubEvents = onSnapshot(q, (snapshot) => {
-      const fetched: Assessment[] = [];
-      snapshot.forEach(doc => {
-        const data = doc.data();
-        if (["Quiz", "Assignment"].includes(data.type)) {
-           if (data.scope === 'targeted' && (data.targetBatch !== userProfile.batch || data.targetFaculty !== userProfile.faculty)) return;
-           fetched.push({
-             id: doc.id,
-             title: data.title,
-             type: data.type as "Quiz" | "Assignment",
-             date: data.dateTime?.toDate ? data.dateTime.toDate() : new Date(data.dateTime),
-             location: data.location
-           });
-        }
-      });
-      setAssessments(fetched.filter(a => getDaysDifference(a.date) >= 0)); 
-    });
+    const fetchAssessments = async () => {
+      const { data, error } = await supabase
+        .from('events')
+        .select('*')
+        .in('type', ['Quiz', 'Assignment'])
+        .in('scope', ['global', 'targeted'])
+        .order('date_time', { ascending: true });
+
+      if (data) {
+        const filtered: Assessment[] = data.filter((d: any) => {
+           if (d.scope === 'targeted' && (d.target_batch !== userProfile.batch || d.target_faculty !== userProfile.faculty)) return false;
+           return true;
+        }).map((d: any) => ({
+           id: d.id,
+           title: d.title,
+           type: d.type as "Quiz" | "Assignment",
+           date: new Date(d.date_time),
+           location: d.location
+        }));
+        
+        setAssessments(filtered.filter(a => getDaysDifference(a.date) >= 0));
+      }
+    };
 
     fetchTimetable();
-    return () => unsubEvents();
-  }, [docId, userProfile]);
+    fetchAssessments();
+
+    // Realtime Events Listener
+    const channel = supabase.channel('realtime_assessments')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'events' }, () => {
+        fetchAssessments();
+      }).subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [userProfile]);
 
   // --- Conflict Detection ---
   const checkConflict = (day: string, startTime: string, type: SessionType, durationStr?: number) => {
@@ -222,19 +237,24 @@ export default function TimetablePage() {
 
   // --- Handlers ---
   const handleSaveTimetable = async () => {
-    if (!docId) return;
+    if (!userProfile) return;
     try {
-      await setDoc(doc(db, "timetables", docId), {
+      // Upsert: Updates if faculty+batch exists, otherwise inserts
+      const { error } = await supabase.from('timetables').upsert({
         faculty: userProfile.faculty,
         batch: userProfile.batch,
         schedule: schedule,
-        updatedBy: userProfile.fullName,
-        lastUpdated: serverTimestamp(),
-      });
+        updated_by: userProfile.fullName
+      }, { onConflict: 'faculty,batch' });
+
+      if (error) throw error;
+
       setSaveMessage("Saved!");
       setIsEditing(false);
       setTimeout(() => setSaveMessage(""), 2000);
-    } catch (e) { alert("Failed to save."); }
+    } catch (e) { 
+      alert("Failed to save schedule."); 
+    }
   };
 
   const handleAddClass = () => {
@@ -273,29 +293,36 @@ export default function TimetablePage() {
   };
 
   const handleAddAssessment = async () => {
-    if (!newAssessment.title || !newAssessment.date || !showAssessmentModal) return;
+    if (!newAssessment.title || !newAssessment.date || !showAssessmentModal || !userProfile) return;
     try {
-      await addDoc(collection(db, "events"), {
+      const { error } = await supabase.from('events').insert({
         title: newAssessment.title,
         type: showAssessmentModal, 
-        dateTime: new Date(newAssessment.date),
+        date_time: new Date(newAssessment.date).toISOString(),
         location: newAssessment.location || "",
         scope: "targeted",
-        targetFaculty: userProfile.faculty,
-        targetBatch: userProfile.batch,
-        authorName: userProfile.fullName,
-        createdAt: serverTimestamp()
+        target_faculty: userProfile.faculty,
+        target_batch: userProfile.batch,
+        author_id: user.id,
+        author_name: userProfile.fullName,
+        designation: userProfile.designation || "Student"
       });
+
+      if (error) throw error;
       setNewAssessment({ title: "", date: "", location: "" });
-    } catch (e) { console.error(e); alert("Error adding assessment"); }
+    } catch (e) { 
+      console.error(e); 
+      alert("Error adding assessment"); 
+    }
   };
 
   const handleDeleteAssessment = async (id: string) => {
-    if (confirm("Delete this assessment?")) await deleteDoc(doc(db, "events", id));
+    if (confirm("Delete this assessment?")) {
+       await supabase.from('events').delete().eq('id', id);
+    }
   };
 
   // --- Views ---
-
   const getNextUpcomingTime = (day: string, daySessions: ClassSession[]) => {
     const now = new Date();
     if (day !== now.toLocaleDateString("en-US", { weekday: "long" })) return null;
@@ -418,7 +445,6 @@ export default function TimetablePage() {
              const stdSlot = SLOTS_STD[rIdx];
              const friSlot = SLOTS_FRI[rIdx];
              
-             // VISUAL BREAK
              const renderBreak = (
                 <div className="col-span-8 h-10 flex items-center justify-center bg-slate-800/30 rounded text-[10px] uppercase font-bold tracking-widest text-slate-500 my-1">
                    Break Time
@@ -490,7 +516,6 @@ export default function TimetablePage() {
                </React.Fragment>
              );
 
-             // Inject Break at index 5 (after 13:20 slot)
              return rIdx === 5 ? <React.Fragment key={`group-${rIdx}`}>{renderBreak}{rowContent}</React.Fragment> : rowContent;
            })}
         </div>
@@ -586,109 +611,113 @@ export default function TimetablePage() {
         )}
       </main>
 
-      <AnimatePresence>
-        {showClassModal && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="bg-slate-900 w-full max-w-md rounded-2xl border border-slate-700 p-6 shadow-[0_0_50px_rgba(0,0,0,0.5)]">
-              <div className="flex justify-between mb-4">
-                <h3 className="text-xl font-bold">Add Class ({activeDay})</h3>
-                <button onClick={() => setShowClassModal(false)}><X /></button>
-              </div>
-              <div className="space-y-4">
-                <input placeholder="Subject" value={newClass.subject || ""} onChange={e => setNewClass({...newClass, subject: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-3 rounded-xl text-white" />
-                <div className="grid grid-cols-2 gap-4">
-                  <select value={newClass.timeStart || ""} onChange={e => setNewClass({...newClass, timeStart: e.target.value})} className="bg-slate-950 border border-slate-800 p-3 rounded-xl text-white">
-                    {(activeDay === "Friday" ? SLOTS_FRI : SLOTS_STD).map(t => {
-                        const isBooked = checkConflict(activeDay, t.start, newClass.type || 'class', newClass.duration) !== "";
-                        return <option key={t.start} value={t.start} disabled={isBooked} className={isBooked ? "text-slate-600" : ""}>{t.start} {isBooked ? "(Occupied)" : ""}</option>
-                    })}
-                  </select>
-                  <select value={newClass.type || "class"} onChange={e => setNewClass({...newClass, type: e.target.value as any})} className="bg-slate-950 border border-slate-800 p-3 rounded-xl text-white">
-                    <option value="class">Class</option>
-                    <option value="lab">Lab</option>
-                  </select>
+      {/* --- MODALS (Wrapped in ModalPortal to fix Centering!) --- */}
+      <ModalPortal>
+        <AnimatePresence>
+          {showClassModal && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="bg-slate-900 w-full max-w-md rounded-2xl border border-slate-700 p-6 shadow-[0_0_50px_rgba(0,0,0,0.5)]">
+                <div className="flex justify-between mb-4">
+                  <h3 className="text-xl font-bold">Add Class ({activeDay})</h3>
+                  <button onClick={() => setShowClassModal(false)}><X /></button>
                 </div>
-                {newClass.type === 'lab' && (
-                   <select value={newClass.duration || 3} onChange={e => setNewClass({...newClass, duration: parseInt(e.target.value)})} className="w-full bg-slate-950 border border-slate-800 p-3 rounded-xl text-white">
-                      <option value={2}>2 Slots (Approx 2 hrs)</option>
-                      <option value={3}>3 Slots (Approx 3 hrs)</option>
-                   </select>
-                )}
-                <input placeholder="Room" value={newClass.room || ""} onChange={e => setNewClass({...newClass, room: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-3 rounded-xl text-white" />
-                
-                {conflictError && (
-                    <div className="flex items-center gap-2 text-red-400 text-sm bg-red-900/20 p-3 rounded-lg border border-red-500/30">
-                        <AlertTriangle size={16} /> {conflictError}
-                    </div>
-                )}
-
-                <button 
-                    onClick={handleAddClass} 
-                    disabled={!!conflictError || !newClass.subject}
-                    className="w-full bg-blue-600 py-3 rounded-xl font-bold hover:bg-blue-500 transition-colors shadow-[0_0_20px_rgba(37,99,235,0.3)] disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    Add
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {showAssessmentModal && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="bg-slate-900 w-full max-w-lg rounded-2xl border border-slate-700 p-6 flex flex-col max-h-[85vh] shadow-[0_0_50px_rgba(0,0,0,0.5)]">
-              <div className="flex justify-between mb-4">
-                <h3 className="text-xl font-bold">{showAssessmentModal}s</h3>
-                <button onClick={() => setShowAssessmentModal(null)}><X /></button>
-              </div>
-              <div className="flex-1 overflow-y-auto space-y-3 mb-4">
-                {assessments.filter(a => a.type === showAssessmentModal).length === 0 ? (
-                  <p className="text-slate-500 text-center py-8">No upcoming {showAssessmentModal}s.</p>
-                ) : (
-                  assessments.filter(a => a.type === showAssessmentModal).map(a => {
-                    const daysLeft = getDaysDifference(a.date);
-                    const color = daysLeft <= 1 ? "red" : "blue";
-                    return (
-                        <div key={a.id} className={`p-4 bg-slate-950 rounded-xl border border-slate-800 flex justify-between items-center ${daysLeft <= 1 ? "border-red-500/40 bg-red-900/10" : ""}`}>
-                        <div>
-                            <div className="font-bold text-white text-lg">{a.title}</div>
-                            <div className="text-xs text-slate-400 mt-1 flex gap-3">
-                                <span>📅 {a.date.toLocaleDateString()}</span>
-                                <span>⏰ {a.date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-                                {a.location && <span>📍 {a.location}</span>}
-                            </div>
-                        </div>
-                        <div className="text-right">
-                            <span className={`block font-bold text-2xl text-${color}-400`}>{daysLeft === 0 ? "Today" : daysLeft}</span>
-                            <span className={`text-[10px] uppercase text-${color}-500`}>{daysLeft === 0 ? "Due" : "Days Left"}</span>
-                        </div>
-                        {isCR && <button onClick={() => handleDeleteAssessment(a.id)} className="text-red-400 p-2"><Trash2 size={16} /></button>}
-                        </div>
-                    );
-                  })
-                )}
-              </div>
-              {isCR && (
-                <div className="pt-4 border-t border-slate-800 space-y-3">
-                  <input placeholder="Title" value={newAssessment.title} onChange={e => setNewAssessment({...newAssessment, title: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-2 rounded-lg text-sm text-white" />
-                  <div className="grid grid-cols-2 gap-2">
-                    <input 
-                        type="datetime-local" 
-                        value={newAssessment.date} 
-                        onChange={e => setNewAssessment({...newAssessment, date: e.target.value})} 
-                        className="bg-slate-950 border border-slate-800 p-2 rounded-lg text-sm text-white [color-scheme:dark]" 
-                    />
-                    <input placeholder="Location" value={newAssessment.location} onChange={e => setNewAssessment({...newAssessment, location: e.target.value})} className="bg-slate-950 border border-slate-800 p-2 rounded-lg text-sm text-white" />
+                <div className="space-y-4">
+                  <input placeholder="Subject" value={newClass.subject || ""} onChange={e => setNewClass({...newClass, subject: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-3 rounded-xl text-white" />
+                  <div className="grid grid-cols-2 gap-4">
+                    <select value={newClass.timeStart || ""} onChange={e => setNewClass({...newClass, timeStart: e.target.value})} className="bg-slate-950 border border-slate-800 p-3 rounded-xl text-white">
+                      {(activeDay === "Friday" ? SLOTS_FRI : SLOTS_STD).map(t => {
+                          const isBooked = checkConflict(activeDay, t.start, newClass.type || 'class', newClass.duration) !== "";
+                          return <option key={t.start} value={t.start} disabled={isBooked} className={isBooked ? "text-slate-600" : ""}>{t.start} {isBooked ? "(Occupied)" : ""}</option>
+                      })}
+                    </select>
+                    <select value={newClass.type || "class"} onChange={e => setNewClass({...newClass, type: e.target.value as any})} className="bg-slate-950 border border-slate-800 p-3 rounded-xl text-white">
+                      <option value="class">Class</option>
+                      <option value="lab">Lab</option>
+                    </select>
                   </div>
-                  <button onClick={() => { handleAddAssessment(); setShowAssessmentModal(null); }} className="w-full bg-blue-600 py-2 rounded-lg font-bold text-sm hover:bg-blue-500 shadow-[0_0_15px_rgba(37,99,235,0.3)]">Post</button>
+                  {newClass.type === 'lab' && (
+                     <select value={newClass.duration || 3} onChange={e => setNewClass({...newClass, duration: parseInt(e.target.value)})} className="w-full bg-slate-950 border border-slate-800 p-3 rounded-xl text-white">
+                        <option value={2}>2 Slots (Approx 2 hrs)</option>
+                        <option value={3}>3 Slots (Approx 3 hrs)</option>
+                     </select>
+                  )}
+                  <input placeholder="Room" value={newClass.room || ""} onChange={e => setNewClass({...newClass, room: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-3 rounded-xl text-white" />
+                  
+                  {conflictError && (
+                      <div className="flex items-center gap-2 text-red-400 text-sm bg-red-900/20 p-3 rounded-lg border border-red-500/30">
+                          <AlertTriangle size={16} /> {conflictError}
+                      </div>
+                  )}
+
+                  <button 
+                      onClick={handleAddClass} 
+                      disabled={!!conflictError || !newClass.subject}
+                      className="w-full bg-blue-600 py-3 rounded-xl font-bold hover:bg-blue-500 transition-colors shadow-[0_0_20px_rgba(37,99,235,0.3)] disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                      Add
+                  </button>
                 </div>
-              )}
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {showAssessmentModal && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="bg-slate-900 w-full max-w-lg rounded-2xl border border-slate-700 p-6 flex flex-col max-h-[85vh] shadow-[0_0_50px_rgba(0,0,0,0.5)]">
+                <div className="flex justify-between mb-4">
+                  <h3 className="text-xl font-bold">{showAssessmentModal}s</h3>
+                  <button onClick={() => setShowAssessmentModal(null)}><X /></button>
+                </div>
+                <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2">
+                  {assessments.filter(a => a.type === showAssessmentModal).length === 0 ? (
+                    <p className="text-slate-500 text-center py-8">No upcoming {showAssessmentModal}s.</p>
+                  ) : (
+                    assessments.filter(a => a.type === showAssessmentModal).map(a => {
+                      const daysLeft = getDaysDifference(a.date);
+                      const color = daysLeft <= 1 ? "red" : "blue";
+                      return (
+                          <div key={a.id} className={`p-4 bg-slate-950 rounded-xl border border-slate-800 flex justify-between items-center ${daysLeft <= 1 ? "border-red-500/40 bg-red-900/10" : ""}`}>
+                          <div>
+                              <div className="font-bold text-white text-lg">{a.title}</div>
+                              <div className="text-xs text-slate-400 mt-1 flex gap-3">
+                                  <span>📅 {a.date.toLocaleDateString()}</span>
+                                  <span>⏰ {a.date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                                  {a.location && <span>📍 {a.location}</span>}
+                              </div>
+                          </div>
+                          <div className="text-right">
+                              <span className={`block font-bold text-2xl text-${color}-400`}>{daysLeft === 0 ? "Today" : daysLeft}</span>
+                              <span className={`text-[10px] uppercase text-${color}-500`}>{daysLeft === 0 ? "Due" : "Days Left"}</span>
+                          </div>
+                          {isCR && <button onClick={() => handleDeleteAssessment(a.id)} className="text-red-400 p-2 ml-2 hover:bg-red-500/20 rounded-lg transition-colors"><Trash2 size={16} /></button>}
+                          </div>
+                      );
+                    })
+                  )}
+                </div>
+                {isCR && (
+                  <div className="pt-4 border-t border-slate-800 space-y-3">
+                    <input placeholder="Title" value={newAssessment.title} onChange={e => setNewAssessment({...newAssessment, title: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-3 rounded-lg text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" />
+                    <div className="grid grid-cols-2 gap-2">
+                      <input 
+                          type="datetime-local" 
+                          value={newAssessment.date} 
+                          onChange={e => setNewAssessment({...newAssessment, date: e.target.value})} 
+                          className="bg-slate-950 border border-slate-800 p-3 rounded-lg text-sm text-white [color-scheme:dark] focus:outline-none focus:border-blue-500 transition-colors" 
+                      />
+                      <input placeholder="Location" value={newAssessment.location} onChange={e => setNewAssessment({...newAssessment, location: e.target.value})} className="bg-slate-950 border border-slate-800 p-3 rounded-lg text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" />
+                    </div>
+                    <button onClick={() => { handleAddAssessment(); setShowAssessmentModal(null); }} disabled={!newAssessment.title || !newAssessment.date} className="w-full bg-blue-600 py-3 rounded-lg font-bold text-sm hover:bg-blue-500 shadow-[0_0_15px_rgba(37,99,235,0.3)] disabled:opacity-50 disabled:cursor-not-allowed">Post</button>
+                  </div>
+                )}
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+      </ModalPortal>
+
     </div>
   );
 }
@@ -697,7 +726,7 @@ export default function TimetablePage() {
 const AssessmentTile = ({ type, data, onClick, isCR }: any) => {
   if (!data) return (
     <div onClick={onClick} className="flex-1 bg-slate-900/40 border border-white/5 rounded-2xl p-4 flex items-center justify-center gap-2 cursor-pointer hover:bg-slate-900/60 transition group">
-      {type === "Quiz" ? <AlertCircle className="text-slate-600 group-hover:text-slate-400" /> : <FileText className="text-slate-600 group-hover:text-slate-400" />}
+      {type === "Quiz" ? <AlertCircle className="text-slate-600 group-hover:text-slate-400 transition-colors" /> : <FileText className="text-slate-600 group-hover:text-slate-400 transition-colors" />}
       <span className="text-slate-500 text-sm font-medium">No Upcoming {type}</span>
       {isCR && <Plus size={16} className="text-blue-500 ml-2" />}
     </div>
